@@ -55,14 +55,66 @@ static void get_warp_ctx(exec_ctx_t *ctx, uint32_t inst, int type)
     }
 }
 
-/* ================ Function Table ================ */
-/* RV32I */
-EXEC_FUNC_IN(add,      { G(rd) = src1 + src2; })
-EXEC_FUNC_IN(addi,     { G(rd) = src1 + imm; })
-EXEC_FUNC_IN(slli,     { G(rd) = src1 << (imm & 0x1F); })
-EXEC_FUNC_IN(andi,     { G(rd) = src1 & imm; })
-EXEC_FUNC_IN(lui,      { G(rd) = imm; })
+/* ======================================= Function Table =============================================== */
+
+/* ======== RV32I ======== */
+
+/* 1. control and branch inst */
+EXEC_FUNC_IN(jal,      { G(rd) = l->pc + 4; l->pc += imm - 4; })
+EXEC_FUNC_IN(jalr,     { G(rd) = l->pc + 4; l->pc = (src1 + imm) & ~1; })
+EXEC_FUNC_IN(beq,      { if (src1 == src2) l->pc += imm - 4; })
+EXEC_FUNC_IN(bne,      { if (src1 != src2) l->pc += imm - 4; })
+EXEC_FUNC_IN(blt,      { if ((int32_t)src1 < (int32_t)src2) l->pc += imm - 4; })
+EXEC_FUNC_IN(bge,      { if ((int32_t)src1 >= (int32_t)src2) l->pc += imm - 4; })
+EXEC_FUNC_IN(bltu,     { if (src1 < src2) l->pc += imm - 4; })
+EXEC_FUNC_IN(bgeu,     { if (src1 >= src2) l->pc += imm - 4; })
+
+/* 2. memory IO inst */
+EXEC_FUNC_IN(lb,       { G_I32(rd) = (int32_t)(Mr(src1 + imm, 1) << 24) >> 24; })
+EXEC_FUNC_IN(lh,       { G_I32(rd) = (int32_t)(Mr(src1 + imm, 2) << 16) >> 16; })
+EXEC_FUNC_IN(lw,       { G(rd) = Mr(src1 + imm, 4); })
+EXEC_FUNC_IN(lbu,      { G(rd) = Mr(src1 + imm, 1); })
+EXEC_FUNC_IN(lhu,      { G(rd) = Mr(src1 + imm, 2); })
+EXEC_FUNC_IN(sb,       { Mw(src1 + imm, 1, src2); })
+EXEC_FUNC_IN(sh,       { Mw(src1 + imm, 2, src2); })
 EXEC_FUNC_IN(sw,       { Mw(src1 + imm, 4, src2); })
+
+/* 3. unary integer operator */
+EXEC_FUNC_IN(lui,      { G(rd) = imm; })
+EXEC_FUNC_IN(auipc,    { G(rd) = l->pc + imm; })
+EXEC_FUNC_IN(addi,     { G(rd) = src1 + imm; })
+EXEC_FUNC_IN(slti,     { G(rd) = ((int32_t)src1 < imm) ? 1 : 0; })
+EXEC_FUNC_IN(sltiu,    { G(rd) = (src1 < (uint32_t)imm) ? 1 : 0; })
+EXEC_FUNC_IN(xori,     { G(rd) = src1 ^ imm; })
+EXEC_FUNC_IN(ori,      { G(rd) = src1 | imm; })
+EXEC_FUNC_IN(andi,     { G(rd) = src1 & imm; })
+EXEC_FUNC_IN(slli,     { G(rd) = src1 << (imm & 0x1F); })
+EXEC_FUNC_IN(srli,     { G(rd) = src1 >> (imm & 0x1F); })
+EXEC_FUNC_IN(srai,     { G_I32(rd) = (int32_t)src1 >> (imm & 0x1F); })
+
+/* 4. binary integer operator */
+EXEC_FUNC_IN(add,      { G(rd) = src1 + src2; })
+EXEC_FUNC_IN(sub,      { G(rd) = src1 - src2; })
+EXEC_FUNC_IN(sll,      { G(rd) = src1 << (src2 & 0x1F); })
+EXEC_FUNC_IN(slt,      { G(rd) = ((int32_t)src1 < (int32_t)src2) ? 1 : 0; })
+EXEC_FUNC_IN(sltu,     { G(rd) = (src1 < src2) ? 1 : 0; })
+EXEC_FUNC_IN(xor,      { G(rd) = src1 ^ src2; })
+EXEC_FUNC_IN(srl,      { G(rd) = src1 >> (src2 & 0x1F); })
+EXEC_FUNC_IN(sra,      { G_I32(rd) = (int32_t)src1 >> (src2 & 0x1F); })
+EXEC_FUNC_IN(or,       { G(rd) = src1 | src2; })
+EXEC_FUNC_IN(and,      { G(rd) = src1 & src2; })
+
+/* 5. RV32M mul & div expansion */
+EXEC_FUNC_IN(mul,      { G(rd) = src1 * src2; })
+EXEC_FUNC_IN(mulh,     { G(rd) = (uint32_t)(((int64_t)(int32_t)src1 * (int64_t)(int32_t)src2) >> 32); })
+EXEC_FUNC_IN(mulhsu,   { G(rd) = (uint32_t)(((int64_t)(int32_t)src1 * (uint64_t)src2) >> 32); })
+EXEC_FUNC_IN(mulhu,    { G(rd) = (uint32_t)(((uint64_t)src1 * (uint64_t)src2) >> 32); })
+EXEC_FUNC_IN(div,      { G_I32(rd) = (src2 == 0) ? -1 : (int32_t)src1 / (int32_t)src2; })
+EXEC_FUNC_IN(divu,     { G(rd) = (src2 == 0) ? 0xFFFFFFFF : src1 / src2; })
+EXEC_FUNC_IN(rem,      { G_I32(rd) = (src2 == 0) ? src1 : (int32_t)src1 % (int32_t)src2; })
+EXEC_FUNC_IN(remu,     { G(rd) = (src2 == 0) ? src1 : src1 % src2; })
+
+/* 6. system inst */
 EXEC_FUNC_IN(ebreak,   { /* nothing */ })
 EXEC_FUNC_IN(csrrs,    {
     switch ((uint16_t)imm) {
@@ -75,13 +127,72 @@ EXEC_FUNC_IN(csrrs,    {
     }
 })
 
-/* RV32F */
-EXEC_FUNC_FP(fcvt_s_w, { F(rd) = (float)G_I32(rs1); })
-EXEC_FUNC_FP(fcvt_w_s, { G_I32(rd) = (int32_t)src1; })
-EXEC_FUNC_FP(fmul_s,   { F(rd) = src1 * src2; })
-EXEC_FUNC_FP(fadd_s,   { F(rd) = src1 + src2; })
+/* ============ RV32F ============ */
 
-/* LP float inst */
+/* 访存指令 */
+EXEC_FUNC_FP(flw,        { uint32_t val = Mr(src1 + imm, 4); F_U32(rd) = val; })
+EXEC_FUNC_FP(fsw,        { uint32_t val = F_U32(rs2); Mw(src1 + imm, 4, val); })
+
+/* 转换指令 */
+EXEC_FUNC_FP(fcvt_s_w,   { F(rd) = (float)G_I32(rs1); })
+EXEC_FUNC_FP(fcvt_s_wu,  { F(rd) = (float)G(rs1); })
+EXEC_FUNC_FP(fcvt_w_s,   { G_I32(rd) = (int32_t)src1; })
+EXEC_FUNC_FP(fcvt_wu_s,  { G(rd) = (uint32_t)src1; })
+
+/* 算术运算 */
+EXEC_FUNC_FP(fadd_s,     { F(rd) = src1 + src2; })
+EXEC_FUNC_FP(fsub_s,     { F(rd) = src1 - src2; })
+EXEC_FUNC_FP(fmul_s,     { F(rd) = src1 * src2; })
+EXEC_FUNC_FP(fdiv_s,     { F(rd) = src1 / src2; })
+EXEC_FUNC_FP(fsqrt_s,    { F(rd) = sqrtf(src1); })
+
+/* 乘加指令 */
+EXEC_FUNC_FP(fmadd_s,    { F(rd) = src1 * src2 + src3; })
+EXEC_FUNC_FP(fmsub_s,    { F(rd) = src1 * src2 - src3; })
+EXEC_FUNC_FP(fnmadd_s,   { F(rd) = -src1 * src2 + src3; })
+EXEC_FUNC_FP(fnmsub_s,   { F(rd) = -src1 * src2 - src3; })
+
+/* 符号注入 */
+EXEC_FUNC_FP(fsgnj_s,    { F_U32(rd) = (F_U32(rs1) & ~0x80000000) | (F_U32(rs2) & 0x80000000); })
+EXEC_FUNC_FP(fsgnjn_s,   { F_U32(rd) = (F_U32(rs1) & ~0x80000000) | ((~F_U32(rs2)) & 0x80000000); })
+EXEC_FUNC_FP(fsgnjx_s,   { F_U32(rd) = F_U32(rs1) ^ (F_U32(rs2) & 0x80000000); })
+
+/* 最值 */
+EXEC_FUNC_FP(fmin_s,     { F(rd) = fminf(src1, src2); })
+EXEC_FUNC_FP(fmax_s,     { F(rd) = fmaxf(src1, src2); })
+
+/* 数据移动 */
+EXEC_FUNC_FP(fmv_w_x,    { F_U32(rd) = G(rs1); })
+EXEC_FUNC_FP(fmv_x_w,    { G(rd) = F_U32(rs1); })
+
+/* 比较 */
+EXEC_FUNC_FP(feq_s,      { G(rd) = (src1 == src2) ? 1 : 0; })
+EXEC_FUNC_FP(flt_s,      { G(rd) = (src1 < src2) ? 1 : 0; })
+EXEC_FUNC_FP(fle_s,      { G(rd) = (src1 <= src2) ? 1 : 0; })
+
+/* 分类 */
+EXEC_FUNC_FP(fclass_s,   { 
+    uint32_t bits = F_U32(rs1);
+    uint32_t exp = (bits >> 23) & 0xFF;
+    uint32_t mant = bits & 0x7FFFFF;
+    uint32_t sign = (bits >> 31) & 1;
+    int result = 0;
+    if (exp == 0xFF) {
+        if (mant == 0) result = sign ? (1 << 0) : (1 << 7);
+        else result = sign ? (1 << 9) : (1 << 8);
+    } else if (exp == 0) {
+        if (mant == 0) result = sign ? (1 << 3) : (1 << 4);
+        else result = sign ? (1 << 2) : (1 << 5);
+    } else {
+        result = sign ? (1 << 1) : (1 << 6);
+    }
+    G(rd) = result;
+})
+
+
+
+/* ======== LP float inst ======== */
+
 EXEC_FUNC_FP(fcvt_s_bf16, { F(rd) = bf16_to_f32(F_BF16(rs1)); })
 EXEC_FUNC_FP(fcvt_bf16_s, { F_BF16(rd) = f32_to_bf16(src1); })
 EXEC_FUNC_FP(fcvt_s_e4m3, { F(rd) = e4m3_to_f32(F_E4M3(rs1)); })
@@ -91,10 +202,8 @@ EXEC_FUNC_FP(fcvt_e5m2_s, { F_E5M2(rd) = f32_to_e5m2(src1); })
 EXEC_FUNC_FP(fcvt_s_e2m1, { F(rd) = e2m1_to_f32(F_E2M1(rs1)); })
 EXEC_FUNC_FP(fcvt_e2m1_s, { F_E2M1(rd) = f32_to_e2m1(src1); })
 
-EXEC_FUNC_FP(fmv_w_x, { F_U32(rd) = G(rs1); })
 
-
-/* ================ Instruction Table ============== */
+/* ============================================= Instruction Table =================================================== */
 typedef void (*exec_func_t)(exec_ctx_t *ctx, int lane_id);
 typedef struct opcode_entry {
     uint32_t mask;
@@ -103,21 +212,83 @@ typedef struct opcode_entry {
     int type;
 } opcode_entry_t;
 
+/* 常见错误：某一行漏加反斜杠 */
 #define INSTRUCTION_LIST \
-    /* RV32I */ \
-    X(add,          "0000000 ????? ????? 000 ????? 01100 11", TYPE_R); \
-    X(addi,         "??????? ????? ????? 000 ????? 00100 11", TYPE_I); \
-    X(slli,         "0000000 ????? ????? 001 ????? 00100 11", TYPE_I); \
-    X(andi,         "??????? ????? ????? 111 ????? 00100 11", TYPE_I); \
-    X(lui,          "??????? ????? ????? ??? ????? 01101 11", TYPE_U); \
+    /* RV32IM */ \
+    X(jal,          "??????? ????? ????? ??? ????? 11011 11", TYPE_J); \
+    X(jalr,         "??????? ????? ????? 000 ????? 11001 11", TYPE_I); \
+    X(beq,          "??????? ????? ????? 000 ????? 11000 11", TYPE_B); \
+    X(bne,          "??????? ????? ????? 001 ????? 11000 11", TYPE_B); \
+    X(blt,          "??????? ????? ????? 100 ????? 11000 11", TYPE_B); \
+    X(bge,          "??????? ????? ????? 101 ????? 11000 11", TYPE_B); \
+    X(bltu,         "??????? ????? ????? 110 ????? 11000 11", TYPE_B); \
+    X(bgeu,         "??????? ????? ????? 111 ????? 11000 11", TYPE_B); \
+    X(lb,           "??????? ????? ????? 000 ????? 00000 11", TYPE_I); \
+    X(lh,           "??????? ????? ????? 001 ????? 00000 11", TYPE_I); \
+    X(lw,           "??????? ????? ????? 010 ????? 00000 11", TYPE_I); \
+    X(lbu,          "??????? ????? ????? 100 ????? 00000 11", TYPE_I); \
+    X(lhu,          "??????? ????? ????? 101 ????? 00000 11", TYPE_I); \
+    X(sb,           "??????? ????? ????? 000 ????? 01000 11", TYPE_S); \
+    X(sh,           "??????? ????? ????? 001 ????? 01000 11", TYPE_S); \
     X(sw,           "??????? ????? ????? 010 ????? 01000 11", TYPE_S); \
+    X(lui,          "??????? ????? ????? ??? ????? 01101 11", TYPE_U); \
+    X(auipc,        "??????? ????? ????? ??? ????? 00101 11", TYPE_U); \
+    X(addi,         "??????? ????? ????? 000 ????? 00100 11", TYPE_I); \
+    X(slti,         "??????? ????? ????? 010 ????? 00100 11", TYPE_I); \
+    X(sltiu,        "??????? ????? ????? 011 ????? 00100 11", TYPE_I); \
+    X(xori,         "??????? ????? ????? 100 ????? 00100 11", TYPE_I); \
+    X(ori,          "??????? ????? ????? 110 ????? 00100 11", TYPE_I); \
+    X(andi,         "??????? ????? ????? 111 ????? 00100 11", TYPE_I); \
+    X(slli,         "0000000 ????? ????? 001 ????? 00100 11", TYPE_I); \
+    X(srli,         "0000000 ????? ????? 101 ????? 00100 11", TYPE_I); \
+    X(srai,         "0100000 ????? ????? 101 ????? 00100 11", TYPE_I); \
+    X(add,          "0000000 ????? ????? 000 ????? 01100 11", TYPE_R); \
+    X(sub,          "0100000 ????? ????? 000 ????? 01100 11", TYPE_R); \
+    X(sll,          "0000000 ????? ????? 001 ????? 01100 11", TYPE_R); \
+    X(slt,          "0000000 ????? ????? 010 ????? 01100 11", TYPE_R); \
+    X(sltu,         "0000000 ????? ????? 011 ????? 01100 11", TYPE_R); \
+    X(xor,          "0000000 ????? ????? 100 ????? 01100 11", TYPE_R); \
+    X(srl,          "0000000 ????? ????? 101 ????? 01100 11", TYPE_R); \
+    X(sra,          "0100000 ????? ????? 101 ????? 01100 11", TYPE_R); \
+    X(or,           "0000000 ????? ????? 110 ????? 01100 11", TYPE_R); \
+    X(and,          "0000000 ????? ????? 111 ????? 01100 11", TYPE_R); \
+    X(mul,          "0000001 ????? ????? 000 ????? 01100 11", TYPE_R); \
+    X(mulh,         "0000001 ????? ????? 001 ????? 01100 11", TYPE_R); \
+    X(mulhsu,       "0000001 ????? ????? 010 ????? 01100 11", TYPE_R); \
+    X(mulhu,        "0000001 ????? ????? 011 ????? 01100 11", TYPE_R); \
+    X(div,          "0000001 ????? ????? 100 ????? 01100 11", TYPE_R); \
+    X(divu,         "0000001 ????? ????? 101 ????? 01100 11", TYPE_R); \
+    X(rem,          "0000001 ????? ????? 110 ????? 01100 11", TYPE_R); \
+    X(remu,         "0000001 ????? ????? 111 ????? 01100 11", TYPE_R); \
     X(csrrs,        "??????? ????? ????? 010 ????? 11100 11", TYPE_CSR); \
     X(ebreak,       "0000000 00001 00000 000 00000 11100 11", TYPE_I); \
     /* RV32F */ \
+    X(flw,          "??????? ????? ????? 010 ????? 00001 11", TYPE_I); \
+    X(fsw,          "??????? ????? ????? 010 ????? 01001 11", TYPE_S); \
+    X(fmadd_s,      "?????00 ????? ????? ??? ????? 10000 11", TYPE_F4); \
+    X(fmsub_s,      "?????00 ????? ????? ??? ????? 10001 11", TYPE_F4); \
+    X(fnmsub_s,     "?????00 ????? ????? ??? ????? 10010 11", TYPE_F4); \
+    X(fnmadd_s,     "?????00 ????? ????? ??? ????? 10011 11", TYPE_F4); \
     X(fadd_s,       "0000000 ????? ????? ??? ????? 10100 11", TYPE_FR); \
+    X(fsub_s,       "0000100 ????? ????? ??? ????? 10100 11", TYPE_FR); \
     X(fmul_s,       "0001000 ????? ????? ??? ????? 10100 11", TYPE_FR); \
-    X(fcvt_s_w,     "1101000 00000 ????? ??? ????? 10100 11", TYPE_FI); \
-    X(fcvt_w_s,     "1100000 00000 ????? ??? ????? 10100 11", TYPE_FI); \
+    X(fdiv_s,       "0001100 ????? ????? ??? ????? 10100 11", TYPE_FR); \
+    X(fsqrt_s,      "0101100 00000 ????? ??? ????? 10100 11", TYPE_FR); \
+    X(fsgnj_s,      "0010000 ????? ????? 000 ????? 10100 11", TYPE_FR); \
+    X(fsgnjn_s,     "0010000 ????? ????? 001 ????? 10100 11", TYPE_FR); \
+    X(fsgnjx_s,     "0010000 ????? ????? 010 ????? 10100 11", TYPE_FR); \
+    X(fmin_s,       "0010100 ????? ????? 000 ????? 10100 11", TYPE_FR); \
+    X(fmax_s,       "0010100 ????? ????? 001 ????? 10100 11", TYPE_FR); \
+    X(fcvt_w_s,     "1100000 00000 ????? ??? ????? 10100 11", TYPE_FR); \
+    X(fcvt_wu_s,    "1100000 00001 ????? ??? ????? 10100 11", TYPE_FR); \
+    X(fmv_x_w,      "1110000 00000 ????? 000 ????? 10100 11", TYPE_FR); \
+    X(feq_s,        "1010000 ????? ????? 010 ????? 10100 11", TYPE_FR); \
+    X(flt_s,        "1010000 ????? ????? 001 ????? 10100 11", TYPE_FR); \
+    X(fle_s,        "1010000 ????? ????? 000 ????? 10100 11", TYPE_FR); \
+    X(fclass_s,     "1110000 00000 ????? 001 ????? 10100 11", TYPE_FR); \
+    X(fcvt_s_w,     "1101000 00000 ????? ??? ????? 10100 11", TYPE_FR); \
+    X(fcvt_s_wu,    "1101000 00001 ????? ??? ????? 10100 11", TYPE_FR); \
+    X(fmv_w_x,      "1111000 00000 ????? 000 ????? 10100 11", TYPE_FR); \
     /* LP float inst */ \
     X(fcvt_s_bf16,  "0100010 00000 ????? ??? ????? 10100 11", TYPE_FR); \
     X(fcvt_bf16_s,  "0100010 00001 ????? ??? ????? 10100 11", TYPE_FR); \
@@ -126,8 +297,7 @@ typedef struct opcode_entry {
     X(fcvt_s_e5m2,  "0100100 00010 ????? ??? ????? 10100 11", TYPE_FR); \
     X(fcvt_e5m2_s,  "0100100 00011 ????? ??? ????? 10100 11", TYPE_FR); \
     X(fcvt_s_e2m1,  "0100110 00000 ????? ??? ????? 10100 11", TYPE_FR); \
-    X(fcvt_e2m1_s,  "0100110 00001 ????? ??? ????? 10100 11", TYPE_FR); \
-    X(fmv_w_x,      "1111000 00000 ????? 000 ????? 10100 11", TYPE_FI);
+    X(fcvt_e2m1_s,  "0100110 00001 ????? ??? ????? 10100 11", TYPE_FR);
 
 static opcode_entry_t opcode_table[NUM_OF_INST];
 static size_t opcode_table_count = 0;
@@ -136,10 +306,12 @@ static void __attribute__((constructor)) init_opcode_table(void)
 {
     int idx = 0;
     
+#ifdef DEBUG_OPCODE_TABLE
     printf("\n=== Initializing Opcode Table ===\n");
     printf("Enum values: TYPE_R=%d, TYPE_I=%d, TYPE_U=%d, TYPE_S=%d, TYPE_J=%d, TYPE_B=%d, TYPE_CSR=%d, TYPE_FR=%d, TYPE_FI=%d, TYPE_FS=%d, TYPE_F4=%d\n",
            TYPE_R, TYPE_I, TYPE_U, TYPE_S, TYPE_J, TYPE_B, TYPE_CSR, TYPE_FR, TYPE_FI, TYPE_FS, TYPE_F4);
     fflush(stdout);
+#endif
     
 #define X(name, pattern, op_type) \
     do { \
@@ -168,9 +340,12 @@ static void __attribute__((constructor)) init_opcode_table(void)
 #undef X
     
     opcode_table_count = idx;
+    
+#ifdef DEBUG_OPCODE_TABLE
     printf("Total entries initialized: %ld\n", opcode_table_count);
     printf("================================\n\n");
     fflush(stdout);
+#endif
 }
 
 static opcode_entry_t *lookup_opcode(uint32_t inst)
@@ -208,7 +383,6 @@ static int exec_one_inst(GPGPUState *s, GPGPUWarp *warp, uint32_t inst)
         if (warp->active_mask & (1 << lane)) {
             entry->exec(&ctx, lane);
             warp->lanes[lane].gpr[0].u32 = 0;
-            warp->lanes[lane].fpr[0].u32 = 0;
         }
     }
 
@@ -276,12 +450,6 @@ int gpgpu_core_exec_warp(GPGPUState *s, GPGPUWarp *warp, uint32_t max_cycles)
             return -1;
         }
 
-        for (int i = 0; i < GPGPU_WARP_SIZE; i++) {
-            if (warp->active_mask & (1 << i)) {
-                warp->lanes[i].pc += 4;
-            }
-        }
-        
         cycles++;
     }
     

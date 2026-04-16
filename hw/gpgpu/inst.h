@@ -3,7 +3,7 @@
 
 #include "qemu/osdep.h"
 
-#define NUM_OF_INST 50
+#define NUM_OF_INST 300
 #define MATCH_EBREAK 0x00100073
 
 /* Instruction Parsing Macros and tools */
@@ -77,6 +77,7 @@ static inline uint32_t pattern_to_match(const char *pattern) {
 /* context for int inst */
 #define INIT_LANE_CONTEXT_IN() \
     GPGPULane *l = &ctx->warp->lanes[lane_id]; \
+    uint32_t old_pc = l->pc; \
     uint32_t src1 = G(rs1); \
     uint32_t src2 = G(rs2); \
     int32_t imm = ctx->imm; \
@@ -85,6 +86,7 @@ static inline uint32_t pattern_to_match(const char *pattern) {
 /* context for float inst */
 #define INIT_LANE_CONTEXT_FP() \
     GPGPULane *l = &ctx->warp->lanes[lane_id]; \
+    uint32_t old_pc = l->pc; \
     float src1 = F(rs1); \
     float src2 = F(rs2); \
     float src3 = F(rs3); \
@@ -97,6 +99,10 @@ static inline uint32_t pattern_to_match(const char *pattern) {
     int32_t imm = ctx->imm; \
     (void)imm;
 
+/* 判断pc是否跳转 */
+#define FINISH_LANE_CONTEXT() \
+    if (l->pc == old_pc) l->pc += 4;
+
 /* ================ Func Wrapper ================ */
 
 /* for int inst */
@@ -104,6 +110,7 @@ static inline uint32_t pattern_to_match(const char *pattern) {
     static void __attribute__((unused)) exec_##name(exec_ctx_t *ctx, int lane_id) { \
         INIT_LANE_CONTEXT_IN(); \
         code \
+        FINISH_LANE_CONTEXT(); \
     }
 
 /* for float inst */
@@ -111,6 +118,7 @@ static inline uint32_t pattern_to_match(const char *pattern) {
     static void __attribute__((unused)) exec_##name(exec_ctx_t *ctx, int lane_id) { \
         INIT_LANE_CONTEXT_FP(); \
         code \
+        FINISH_LANE_CONTEXT(); \
     }
 
 /* for special inst */
@@ -118,6 +126,7 @@ static inline uint32_t pattern_to_match(const char *pattern) {
     static void __attribute__((unused)) exec_##name(exec_ctx_t *ctx, int lane_id) { \
         INIT_LANE_CONTEXT_NO(); \
         code \
+        FINISH_LANE_CONTEXT(); \
     }
 
 #endif /* INST_H */
