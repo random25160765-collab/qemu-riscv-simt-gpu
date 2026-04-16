@@ -171,15 +171,8 @@ static void gpgpu_ctrl_write(void *opaque, hwaddr addr, uint64_t val,
             break;
         case GPGPU_REG_DISPATCH:
             gpu->global_status = GPGPU_STATUS_BUSY;
-            int ret = gpgpu_core_exec_kernel(gpu);
-            if (ret == 0) {
-                gpu->global_status = GPGPU_STATUS_READY;
-                gpu->irq_status |= GPGPU_IRQ_KERNEL_DONE;
-            } else {
-                gpu->global_status = GPGPU_STATUS_ERROR;
-                gpu->error_status |= GPGPU_ERR_KERNEL_FAULT;
-                gpu->irq_status |= GPGPU_IRQ_ERROR;
-            }
+            timer_mod_ns(gpu->kernel_timer,
+                          qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) + 1000 * 1000);
             break;
         case GPGPU_REG_DMA_SRC_LO:
             gpu->dma.src_addr = (gpu->dma.src_addr & 0xFFFFFFFF00000000ULL) | val;
@@ -337,7 +330,24 @@ static void gpgpu_dma_complete(void *opaque)
 /* TODO: Implement kernel completion handler */
 static void gpgpu_kernel_complete(void *opaque)
 {
-    (void)opaque;
+    GPGPUState *s = GPGPU(opaque);
+
+    int ret = gpgpu_core_exec_kernel(s);
+
+    if (ret == 0) {
+        s->global_status = GPGPU_STATUS_READY;
+        s->irq_status |= GPGPU_IRQ_KERNEL_DONE;
+        if (s->irq_enable & GPGPU_IRQ_KERNEL_DONE) {
+            msix_notify(&s->parent_obj, GPGPU_MSIX_VEC_KERNEL);
+        }
+    } else {
+        s->global_status = GPGPU_STATUS_ERROR;
+        s->error_status |= GPGPU_ERR_KERNEL_FAULT;
+        s->irq_status |= GPGPU_IRQ_ERROR;
+        if (s->irq_enable & GPGPU_IRQ_ERROR) {
+            msix_notify(&s->parent_obj, GPGPU_MSIX_VEC_ERROR);
+        }
+    }
 }
 
 static void gpgpu_realize(PCIDevice *pdev, Error **errp)
