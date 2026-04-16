@@ -62,11 +62,11 @@ static inline uint32_t pattern_to_match(const char *pattern) {
 
 /* default */
 #define G(i)        (l->gpr[ctx->i].u32)
-#define F(i)        (l->fpr[ctx->i].f32)
+#define F(i)        (l->fpr[ctx->i].u32)
 /* other choice */
-#define G_F32(i)    (l->gpr[ctx->i].f32)
+#define G_CF(i)    (l->gpr[ctx->i].f32)
 #define G_I32(i)    (l->gpr[ctx->i].i32)
-#define F_U32(i)    (l->fpr[ctx->i].u32)
+#define F_CF(i)     (l->fpr[ctx->i].f32)
 #define F_I32(i)    (l->fpr[ctx->i].i32)
 #define F_BF16(i)   (l->fpr[ctx->i].bf16)
 #define F_E4M3(i)   (l->fpr[ctx->i].e4m3)
@@ -100,9 +100,9 @@ static inline uint32_t pattern_to_match(const char *pattern) {
 #define INIT_LANE_CONTEXT_FP() \
     GPGPULane *l = &ctx->warp->lanes[lane_id]; \
     uint32_t old_pc = l->pc; \
-    float src1 = F(rs1); \
-    float src2 = F(rs2); \
-    float src3 = F(rs3); \
+    float32 src1 = F(rs1); \
+    float32 src2 = F(rs2); \
+    float32 src3 = F(rs3); \
     int32_t imm = ctx->imm; \
     (void)src1; (void)src2; (void)src3; (void)imm;
 
@@ -140,12 +140,27 @@ static inline uint32_t pattern_to_match(const char *pattern) {
         INIT_LANE_CONTEXT_FP(); \
         IF_DEBUG_INST( \
             LogTrace("[EXEC] %-10s lane=%d pc=0x%08x rs1=%-2d(0x%08x) rs2=%-2d(0x%08x) rs3=%-2d(0x%08x) imm=%d", \
-                     #name, lane_id, old_pc, ctx->rs1, F_U32(rs1), ctx->rs2, F_U32(rs2), ctx->rs3, F_U32(rs3), imm); \
+                     #name, lane_id, old_pc, ctx->rs1, F(rs1), ctx->rs2, F(rs2), ctx->rs3, F(rs3), imm); \
         ) \
+        /* sync_fcsr_to_fp_status */ \
+        do { \
+            uint8_t __frm = (l->fcsr >> 5) & 0x7; \
+            if (__frm <= 4) { \
+                l->fp_status.float_rounding_mode = __frm; \
+            } else { \
+                l->fp_status.float_rounding_mode = 0; /* RNE */ \
+            } \
+            l->fp_status.float_exception_flags = 0; \
+        } while(0); \
         code \
+        /* sync_fp_status_to_fcsr */ \
+        do { \
+            uint8_t __fflags = l->fp_status.float_exception_flags & 0x1F; \
+            l->fcsr = (l->fcsr & ~0x1F) | __fflags; \
+        } while(0); \
         IF_DEBUG_INST( \
             LogTrace("[RES ] %-10s lane=%d rd=%-2d val=0x%08x (%f)", \
-                     #name, lane_id, ctx->rd, F_U32(rd), F(rd)); \
+                     #name, lane_id, ctx->rd, F(rd), F_CF(rd)); \
         ) \
         FINISH_LANE_CONTEXT(); \
     }

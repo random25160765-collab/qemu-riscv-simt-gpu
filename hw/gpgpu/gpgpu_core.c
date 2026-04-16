@@ -130,49 +130,88 @@ EXEC_FUNC_IN(csrrs,    {
 /* ============ RV32F ============ */
 
 /* 访存指令 */
-EXEC_FUNC_FP(flw,        { uint32_t val = Mr(src1 + imm, 4); F_U32(rd) = val; })
-EXEC_FUNC_FP(fsw,        { uint32_t val = F_U32(rs2); Mw(src1 + imm, 4, val); })
+EXEC_FUNC_FP(flw, {
+    uint32_t val = Mr(src1 + imm, 4);
+    F(rd) = val;
+})
 
-/* 转换指令 */
-EXEC_FUNC_FP(fcvt_s_w,   { F(rd) = (float)G_I32(rs1); })
-EXEC_FUNC_FP(fcvt_s_wu,  { F(rd) = (float)G(rs1); })
-EXEC_FUNC_FP(fcvt_w_s,   { G_I32(rd) = (int32_t)src1; })
-EXEC_FUNC_FP(fcvt_wu_s,  { G(rd) = (uint32_t)src1; })
-
-/* 算术运算 */
-EXEC_FUNC_FP(fadd_s,     { F(rd) = src1 + src2; })
-EXEC_FUNC_FP(fsub_s,     { F(rd) = src1 - src2; })
-EXEC_FUNC_FP(fmul_s,     { F(rd) = src1 * src2; })
-EXEC_FUNC_FP(fdiv_s,     { F(rd) = src1 / src2; })
-EXEC_FUNC_FP(fsqrt_s,    { F(rd) = sqrtf(src1); })
-
-/* 乘加指令 */
-EXEC_FUNC_FP(fmadd_s,    { F(rd) = src1 * src2 + src3; })
-EXEC_FUNC_FP(fmsub_s,    { F(rd) = src1 * src2 - src3; })
-EXEC_FUNC_FP(fnmadd_s,   { F(rd) = -src1 * src2 + src3; })
-EXEC_FUNC_FP(fnmsub_s,   { F(rd) = -src1 * src2 - src3; })
+EXEC_FUNC_FP(fsw, {
+    uint32_t val = F(rs2);
+    Mw(src1 + imm, 4, val);
+})
 
 /* 符号注入 */
-EXEC_FUNC_FP(fsgnj_s,    { F_U32(rd) = (F_U32(rs1) & ~0x80000000) | (F_U32(rs2) & 0x80000000); })
-EXEC_FUNC_FP(fsgnjn_s,   { F_U32(rd) = (F_U32(rs1) & ~0x80000000) | ((~F_U32(rs2)) & 0x80000000); })
-EXEC_FUNC_FP(fsgnjx_s,   { F_U32(rd) = F_U32(rs1) ^ (F_U32(rs2) & 0x80000000); })
+EXEC_FUNC_FP(fsgnj_s,  { F(rd) = (F(rs1) & ~0x80000000) | (F(rs2) & 0x80000000); })
+EXEC_FUNC_FP(fsgnjn_s, { F(rd) = (F(rs1) & ~0x80000000) | ((~F(rs2)) & 0x80000000); })
+EXEC_FUNC_FP(fsgnjx_s, { F(rd) = F(rs1) ^ (F(rs2) & 0x80000000); })
+
+/* 算术运算 */
+EXEC_FUNC_FP(fadd_s,   { F(rd) = float32_add(F(rs1), F(rs2), &l->fp_status); })
+EXEC_FUNC_FP(fsub_s,   { F(rd) = float32_sub(F(rs1), F(rs2), &l->fp_status); })
+EXEC_FUNC_FP(fmul_s,   { F(rd) = float32_mul(F(rs1), F(rs2), &l->fp_status); })
+EXEC_FUNC_FP(fdiv_s,   { F(rd) = float32_div(F(rs1), F(rs2), &l->fp_status); })
+EXEC_FUNC_FP(fsqrt_s,  { F(rd) = float32_sqrt(F(rs1), &l->fp_status); })
+
+/* 乘加指令 */
+EXEC_FUNC_FP(fmadd_s,  { F(rd) = float32_muladd(F(rs1), F(rs2), F(rs3), 0, &l->fp_status); })
+EXEC_FUNC_FP(fmsub_s,  { F(rd) = float32_muladd(F(rs1), F(rs2), F(rs3), float_muladd_negate_c, &l->fp_status); })
+EXEC_FUNC_FP(fnmsub_s, { F(rd) = float32_muladd(F(rs1), F(rs2), F(rs3), float_muladd_negate_product, &l->fp_status); })
+EXEC_FUNC_FP(fnmadd_s, { F(rd) = float32_muladd(F(rs1), F(rs2), F(rs3), float_muladd_negate_result, &l->fp_status); })
 
 /* 最值 */
-EXEC_FUNC_FP(fmin_s,     { F(rd) = fminf(src1, src2); })
-EXEC_FUNC_FP(fmax_s,     { F(rd) = fmaxf(src1, src2); })
+EXEC_FUNC_FP(fmin_s,   { F(rd) = float32_min(F(rs1), F(rs2), &l->fp_status); })
+EXEC_FUNC_FP(fmax_s,   { F(rd) = float32_max(F(rs1), F(rs2), &l->fp_status); })
 
-/* 数据移动 */
-EXEC_FUNC_FP(fmv_w_x,    { F_U32(rd) = G(rs1); })
-EXEC_FUNC_FP(fmv_x_w,    { G(rd) = F_U32(rs1); })
+/* 转换指令 */
+EXEC_FUNC_FP(fcvt_s_w,   { F(rd) = int32_to_float32(G_I32(rs1), &l->fp_status); })
+EXEC_FUNC_FP(fcvt_s_wu,  { F(rd) = uint32_to_float32(G(rs1), &l->fp_status); })
+
+EXEC_FUNC_FP(fcvt_w_s, {
+    float32 f = F(rs1);
+    if (float32_is_quiet_nan(f, &l->fp_status) || float32_is_signaling_nan(f, &l->fp_status)) {
+        G_I32(rd) = 0x7FFFFFFF;
+    } else {
+        float32 max_int = int32_to_float32(0x7FFFFFFF, &l->fp_status);
+        float32 min_int = int32_to_float32(0x80000000, &l->fp_status);
+        
+        if (float32_le(max_int, f, &l->fp_status)) {
+            G_I32(rd) = 0x7FFFFFFF;
+        } else if (float32_lt(f, min_int, &l->fp_status)) {
+            G_I32(rd) = 0x80000000;
+        } else {
+            G_I32(rd) = float32_to_int32(f, &l->fp_status);
+        }
+    }
+})
+
+EXEC_FUNC_FP(fcvt_wu_s, {
+    float32 f = F(rs1);
+    if (float32_is_quiet_nan(f, &l->fp_status) || float32_is_signaling_nan(f, &l->fp_status)) {
+        G(rd) = 0xFFFFFFFF;
+    } else if (float32_lt(f, 0, &l->fp_status)) {
+        G(rd) = 0;
+    } else {
+        float32 max_uint = uint32_to_float32(0xFFFFFFFF, &l->fp_status);
+        if (float32_le(max_uint, f, &l->fp_status)) {
+            G(rd) = 0xFFFFFFFF;
+        } else {
+            G(rd) = float32_to_uint32(f, &l->fp_status);
+        }
+    }
+})
 
 /* 比较 */
-EXEC_FUNC_FP(feq_s,      { G(rd) = (src1 == src2) ? 1 : 0; })
-EXEC_FUNC_FP(flt_s,      { G(rd) = (src1 < src2) ? 1 : 0; })
-EXEC_FUNC_FP(fle_s,      { G(rd) = (src1 <= src2) ? 1 : 0; })
+EXEC_FUNC_FP(feq_s,   { G(rd) = float32_eq(F(rs1), F(rs2), &l->fp_status); })
+EXEC_FUNC_FP(flt_s,   { G(rd) = float32_lt(F(rs1), F(rs2), &l->fp_status); })
+EXEC_FUNC_FP(fle_s,   { G(rd) = float32_le(F(rs1), F(rs2), &l->fp_status); })
+
+/* 数据移动 */
+EXEC_FUNC_FP(fmv_w_x,  { F(rd) = G(rs1); })
+EXEC_FUNC_FP(fmv_x_w,  { G(rd) = F(rs1); })
 
 /* 分类 */
-EXEC_FUNC_FP(fclass_s,   { 
-    uint32_t bits = F_U32(rs1);
+EXEC_FUNC_FP(fclass_s, { 
+    uint32_t bits = F(rs1);
     uint32_t exp = (bits >> 23) & 0xFF;
     uint32_t mant = bits & 0x7FFFFF;
     uint32_t sign = (bits >> 31) & 1;
@@ -189,18 +228,16 @@ EXEC_FUNC_FP(fclass_s,   {
     G(rd) = result;
 })
 
-
-
 /* ======== LP float inst ======== */
 
 EXEC_FUNC_FP(fcvt_s_bf16, { F(rd) = bf16_to_f32(F_BF16(rs1)); })
-EXEC_FUNC_FP(fcvt_bf16_s, { F_BF16(rd) = f32_to_bf16(src1); })
+EXEC_FUNC_FP(fcvt_bf16_s, { F_BF16(rd) = f32_to_bf16(F(rs1)); })
 EXEC_FUNC_FP(fcvt_s_e4m3, { F(rd) = e4m3_to_f32(F_E4M3(rs1)); })
-EXEC_FUNC_FP(fcvt_e4m3_s, { F_E4M3(rd) = f32_to_e4m3(src1); })
+EXEC_FUNC_FP(fcvt_e4m3_s, { F_E4M3(rd) = f32_to_e4m3(F(rs1)); })
 EXEC_FUNC_FP(fcvt_s_e5m2, { F(rd) = e5m2_to_f32(F_E5M2(rs1)); })
-EXEC_FUNC_FP(fcvt_e5m2_s, { F_E5M2(rd) = f32_to_e5m2(src1); })
+EXEC_FUNC_FP(fcvt_e5m2_s, { F_E5M2(rd) = f32_to_e5m2(F(rs1)); })
 EXEC_FUNC_FP(fcvt_s_e2m1, { F(rd) = e2m1_to_f32(F_E2M1(rs1)); })
-EXEC_FUNC_FP(fcvt_e2m1_s, { F_E2M1(rd) = f32_to_e2m1(src1); })
+EXEC_FUNC_FP(fcvt_e2m1_s, { F_E2M1(rd) = f32_to_e2m1(F(rs1)); })
 
 
 /* ============================================= Instruction Table =================================================== */
