@@ -55,6 +55,45 @@ static void get_warp_ctx(exec_ctx_t *ctx, uint32_t inst, int type)
     }
 }
 
+/* CSR 读取函数 */
+static uint32_t csr_read(GPGPULane *l, uint16_t csr_addr) {
+    switch (csr_addr) {
+        case CSR_MHARTID:
+            return l->mhartid;
+        case CSR_FFLAGS:
+            return l->fcsr & 0x1F;
+        case CSR_FRM:
+            return (l->fcsr >> 5) & 0x7;
+        case CSR_FCSR:
+            return l->fcsr;
+        default:
+            LogWarn("csr_read: unknown CSR 0x%03x", csr_addr);
+            return 0;
+    }
+}
+
+/* CSR 写入函数 */
+static void csr_write(GPGPULane *l, uint16_t csr_addr, uint32_t val) {
+    switch (csr_addr) {
+        case CSR_FFLAGS:
+            l->fcsr = (l->fcsr & ~0x1F) | (val & 0x1F);
+            break;
+        case CSR_FRM:
+            l->fcsr = (l->fcsr & ~0xE0) | ((val & 0x7) << 5);
+            break;
+        case CSR_FCSR:
+            l->fcsr = val;
+            break;
+        case CSR_MHARTID:
+            // RO register, ignore write
+            LogWarn("csr_write: attempt to write read-only CSR 0x%03x", csr_addr);
+            break;
+        default:
+            LogWarn("csr_write: unknown CSR 0x%03x", csr_addr);
+            break;
+    }
+}
+
 /* ======================================= Function Table =============================================== */
 
 /* ======== RV32I ======== */
@@ -116,14 +155,60 @@ EXEC_FUNC_IN(remu,     { G(rd) = (src2 == 0) ? src1 : src1 % src2; })
 
 /* 6. system inst */
 EXEC_FUNC_IN(ebreak,   { /* nothing */ })
-EXEC_FUNC_IN(csrrs,    {
-    switch ((uint16_t)imm) {
-        case CSR_MHARTID: 
-            G(rd) = l->mhartid;
-            break;
-        default:
-            printf("[DEBUG] csrrs: unknown CSR 0x%x\n", (uint16_t)imm);
-            break;
+
+/* CSRRW: 原子交换 CSR 和整数寄存器 */
+EXEC_FUNC_IN(csrrw, {
+    uint16_t csr = (uint16_t)imm;
+    uint32_t old_val = csr_read(l, csr);
+    G(rd) = old_val;
+    csr_write(l, csr, src1);
+})
+
+/* CSRRS: 读 CSR 并置位 */
+EXEC_FUNC_IN(csrrs, {
+    uint16_t csr = (uint16_t)imm;
+    uint32_t old_val = csr_read(l, csr);
+    G(rd) = old_val;
+    if (ctx->rs1 != 0) {  // x0 时只读不写
+        csr_write(l, csr, old_val | src1);
+    }
+})
+
+/* CSRRC: 读 CSR 并清零 */
+EXEC_FUNC_IN(csrrc, {
+    uint16_t csr = (uint16_t)imm;
+    uint32_t old_val = csr_read(l, csr);
+    G(rd) = old_val;
+    if (ctx->rs1 != 0) {
+        csr_write(l, csr, old_val & ~src1);
+    }
+})
+
+/* CSRRWI: 原子交换 CSR 和立即数 */
+EXEC_FUNC_IN(csrrwi, {
+    uint16_t csr = (uint16_t)imm;
+    uint32_t old_val = csr_read(l, csr);
+    G(rd) = old_val;
+    csr_write(l, csr, (uint32_t)ctx->rs1);  // uimm[4:0]
+})
+
+/* CSRRSI: 读 CSR 并用立即数置位 */
+EXEC_FUNC_IN(csrrsi, {
+    uint16_t csr = (uint16_t)imm;
+    uint32_t old_val = csr_read(l, csr);
+    G(rd) = old_val;
+    if (ctx->rs1 != 0) {
+        csr_write(l, csr, old_val | (uint32_t)ctx->rs1);
+    }
+})
+
+/* CSRRCI: 读 CSR 并用立即数清零 */
+EXEC_FUNC_IN(csrrci, {
+    uint16_t csr = (uint16_t)imm;
+    uint32_t old_val = csr_read(l, csr);
+    G(rd) = old_val;
+    if (ctx->rs1 != 0) {
+        csr_write(l, csr, old_val & ~(uint32_t)ctx->rs1);
     }
 })
 
@@ -297,7 +382,12 @@ typedef struct opcode_entry {
     X(divu,         "0000001 ????? ????? 101 ????? 01100 11", TYPE_R); \
     X(rem,          "0000001 ????? ????? 110 ????? 01100 11", TYPE_R); \
     X(remu,         "0000001 ????? ????? 111 ????? 01100 11", TYPE_R); \
+    X(csrrw,        "??????? ????? ????? 001 ????? 11100 11", TYPE_CSR); \
     X(csrrs,        "??????? ????? ????? 010 ????? 11100 11", TYPE_CSR); \
+    X(csrrc,        "??????? ????? ????? 011 ????? 11100 11", TYPE_CSR); \
+    X(csrrwi,       "??????? ????? ????? 101 ????? 11100 11", TYPE_CSR); \
+    X(csrrsi,       "??????? ????? ????? 110 ????? 11100 11", TYPE_CSR); \
+    X(csrrci,       "??????? ????? ????? 111 ????? 11100 11", TYPE_CSR); \
     X(ebreak,       "0000000 00001 00000 000 00000 11100 11", TYPE_I); \
     /* RV32F */ \
     X(flw,          "??????? ????? ????? 010 ????? 00001 11", TYPE_I); \
