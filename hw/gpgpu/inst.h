@@ -45,32 +45,78 @@ static inline uint32_t pattern_to_match(const char *pattern) {
     return match;
 }
 
-/* Function table macros */
-#define IS_FP_SRC_TYPE(t) ((t) == TYPE_FR || (t) == TYPE_FI || (t) == TYPE_FS || (t) == TYPE_F4)
-#define IS_FP_DST_TYPE(t) ((t) == TYPE_FR || (t) == TYPE_FI || (t) == TYPE_FS || (t) == TYPE_F4)
+/* ======== Register ======== */
 
-#define INIT_LANE_CONTEXT() \
+/* default */
+#define G(i)        (l->gpr[ctx->i].u32)
+#define F(i)        (l->fpr[ctx->i].f32)
+/* other choice */
+#define G_F32(i)    (l->gpr[ctx->i].f32)
+#define G_I32(i)    (l->gpr[ctx->i].i32)
+#define F_U32(i)    (l->fpr[ctx->i].u32)
+#define F_I32(i)    (l->fpr[ctx->i].i32)
+#define F_BF16(i)   (l->fpr[ctx->i].bf16)
+#define F_E4M3(i)   (l->fpr[ctx->i].e4m3)
+#define F_E5M2(i)   (l->fpr[ctx->i].e5m2)
+#define F_E2M1(i)   (l->fpr[ctx->i].e2m1)
+
+/* ======== Memory ======== */
+#define Mw(addr, len, data) vram_write(ctx->s, addr, len, data)
+#define Mr(addr, len) vram_read(ctx->s, addr, len)
+
+/* ======== IMM ======== */
+#define immI(i)   (SEXT(BITS(i, 31, 20), 12))
+#define immU(i)   ((SEXT(BITS(i, 31, 12), 20) << 12))
+#define immS(i)   ((SEXT(BITS(i, 31, 25), 7) << 5) | BITS(i, 11, 7))
+#define immB(i)   ((SEXT(BITS(i, 31, 31), 1) << 12) | (BITS(i, 7, 7) << 11) | (BITS(i, 30, 25) << 5) | (BITS(i, 11, 8) << 1))
+#define immJ(i)   ((SEXT(BITS(i, 31, 31), 1) << 20) | (BITS(i, 19, 12) << 12) | (BITS(i, 20, 20) << 11) | (BITS(i, 30, 21) << 1))
+#define immCSR(i) (BITS(inst, 31, 20))
+
+/* ============== Context ================= */
+
+/* context for int inst */
+#define INIT_LANE_CONTEXT_IN() \
     GPGPULane *l = &ctx->warp->lanes[lane_id]; \
-    uint32_t src1_u32 = IS_FP_SRC_TYPE(ctx->type) ? l->fpr[ctx->rs1] : l->gpr[ctx->rs1]; \
-    uint32_t src2_u32 = IS_FP_SRC_TYPE(ctx->type) ? l->fpr[ctx->rs2] : l->gpr[ctx->rs2]; \
-    uint32_t src3_u32 = l->fpr[ctx->rs3]; \
+    uint32_t src1 = G(rs1); \
+    uint32_t src2 = G(rs2); \
     int32_t imm = ctx->imm; \
-    float src1_f, src2_f, src3_f; \
-    if (IS_FP_DST_TYPE(ctx->type)) { \
-        memcpy(&src1_f, &src1_u32, sizeof(float)); \
-        memcpy(&src2_f, &src2_u32, sizeof(float)); \
-        memcpy(&src3_f, &src3_u32, sizeof(float)); \
-    } else { \
-        src1_f = 0; src2_f = 0; src3_f = 0; \
-    } \
-    uint32_t src1 = src1_u32; \
-    uint32_t src2 = src2_u32; \
-    uint32_t src3 = src3_u32; \
-    (void)src1; (void)src2; (void)src3; (void)imm; (void)src1_f; (void)src2_f; (void)src3_f;
+    (void)src1; (void)src2; (void)imm;
 
-#define EXEC_FUNC(name, code) \
+/* context for float inst */
+#define INIT_LANE_CONTEXT_FP() \
+    GPGPULane *l = &ctx->warp->lanes[lane_id]; \
+    float src1 = F(rs1); \
+    float src2 = F(rs2); \
+    float src3 = F(rs3); \
+    int32_t imm = ctx->imm; \
+    (void)src1; (void)src2; (void)src3; (void)imm;
+
+/* minimum context for special inst */
+#define INIT_LANE_CONTEXT_NO() \
+    GPGPULane *l = &ctx->warp->lanes[lane_id]; \
+    int32_t imm = ctx->imm; \
+    (void)imm;
+
+/* ================ Func Wrapper ================ */
+
+/* for int inst */
+#define EXEC_FUNC_IN(name, code) \
     static void __attribute__((unused)) exec_##name(exec_ctx_t *ctx, int lane_id) { \
-        INIT_LANE_CONTEXT(); \
+        INIT_LANE_CONTEXT_IN(); \
+        code \
+    }
+
+/* for float inst */
+#define EXEC_FUNC_FP(name, code) \
+    static void __attribute__((unused)) exec_##name(exec_ctx_t *ctx, int lane_id) { \
+        INIT_LANE_CONTEXT_FP(); \
+        code \
+    }
+
+/* for special inst */
+#define EXEC_FUNC_NO(name, code) \
+    static void __attribute__((unused)) exec_##name(exec_ctx_t *ctx, int lane_id) { \
+        INIT_LANE_CONTEXT_NO(); \
         code \
     }
 

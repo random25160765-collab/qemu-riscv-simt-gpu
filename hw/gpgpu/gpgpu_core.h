@@ -68,9 +68,32 @@ typedef struct GPGPUState GPGPUState;
  * ============================================================================
  * 每个 Lane 相当于一个简化的 RISC-V 核心
  */
+
+typedef union {
+    uint32_t u32;
+    int32_t i32;
+    float f32;
+    struct {
+        uint32_t : 16;
+        uint16_t bf16;
+    };
+    struct {
+        uint32_t : 24;
+        uint8_t e4m3;
+    };
+    struct {
+        uint32_t : 24;
+        uint8_t e5m2;
+    };
+    struct {
+        uint32_t : 28;
+        uint8_t e2m1;
+    };
+} GPURegister;
+
 typedef struct GPGPULane {
-    uint32_t gpr[GPGPU_NUM_REGS];   /* 通用寄存器 x0-x31 */
-    uint32_t fpr[GPGPU_NUM_FREGS];  /* 浮点寄存器 f0-f31 */
+    GPURegister gpr[GPGPU_NUM_REGS];   /* 通用寄存器 x0-x31 */
+    GPURegister fpr[GPGPU_NUM_FREGS];  /* 浮点寄存器 f0-f31 */
     uint32_t pc;                     /* 程序计数器 */
     uint32_t mhartid;                /* 完整 hart ID (block|warp|lane) */
     uint32_t fcsr;                   /* fflags[4:0] | frm[7:5] */

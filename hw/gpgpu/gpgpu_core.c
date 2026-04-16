@@ -19,22 +19,6 @@ typedef enum {
     TYPE_FR, TYPE_FI, TYPE_FS, TYPE_F4,
 } inst_type_t;
 
-/* ======== Register ======== */
-#define G(i) (l->gpr[ctx->i])
-#define F(i) (l->fpr[ctx->i])
-
-/* ======== Memory ======== */
-#define Mw(addr, len, data) vram_write(ctx->s, addr, len, data)
-#define Mr(addr, len) vram_read(ctx->s, addr, len)
-
-/* ======== IMM ======== */
-#define immI(i)  (SEXT(BITS(i, 31, 20), 12))
-#define immU(i)  ((SEXT(BITS(i, 31, 12), 20) << 12))
-#define immS(i)  ((SEXT(BITS(i, 31, 25), 7) << 5) | BITS(i, 11, 7))
-#define immB(i)  ((SEXT(BITS(i, 31, 31), 1) << 12) | (BITS(i, 7, 7) << 11) | (BITS(i, 30, 25) << 5) | (BITS(i, 11, 8) << 1))
-#define immJ(i)  ((SEXT(BITS(i, 31, 31), 1) << 20) | (BITS(i, 19, 12) << 12) | (BITS(i, 20, 20) << 11) | (BITS(i, 30, 21) << 1))
-#define immCSR(i) (BITS(inst, 31, 20))
-
 /* context of warp */
 typedef struct exec_ctx {
     GPGPUState *s;
@@ -73,14 +57,14 @@ static void get_warp_ctx(exec_ctx_t *ctx, uint32_t inst, int type)
 
 /* ================ Function Table ================ */
 /* RV32I */
-EXEC_FUNC(add,      { G(rd) = src1 + src2; })
-EXEC_FUNC(addi,     { G(rd) = src1 + imm; })
-EXEC_FUNC(slli,     { G(rd) = src1 << (imm & 0x1F); })
-EXEC_FUNC(andi,     { G(rd) = src1 & imm; })
-EXEC_FUNC(lui,      { G(rd) = imm; })
-EXEC_FUNC(sw,       { Mw(src1 + imm, 4, src2); })
-EXEC_FUNC(ebreak,   { /* nothing */ })
-EXEC_FUNC(csrrs,    {
+EXEC_FUNC_IN(add,      { G(rd) = src1 + src2; })
+EXEC_FUNC_IN(addi,     { G(rd) = src1 + imm; })
+EXEC_FUNC_IN(slli,     { G(rd) = src1 << (imm & 0x1F); })
+EXEC_FUNC_IN(andi,     { G(rd) = src1 & imm; })
+EXEC_FUNC_IN(lui,      { G(rd) = imm; })
+EXEC_FUNC_IN(sw,       { Mw(src1 + imm, 4, src2); })
+EXEC_FUNC_IN(ebreak,   { /* nothing */ })
+EXEC_FUNC_IN(csrrs,    {
     switch ((uint16_t)imm) {
         case CSR_MHARTID: 
             G(rd) = l->mhartid;
@@ -92,93 +76,22 @@ EXEC_FUNC(csrrs,    {
 })
 
 /* RV32F */
-EXEC_FUNC(fcvt_s_w, { 
-    int32_t src_int = l->gpr[ctx->rs1];
-    float result = (float)src_int;
-    memcpy(&F(rd), &result, sizeof(float));
-})
+EXEC_FUNC_FP(fcvt_s_w, { F(rd) = (float)G_I32(rs1); })
+EXEC_FUNC_FP(fcvt_w_s, { G_I32(rd) = (int32_t)src1; })
+EXEC_FUNC_FP(fmul_s,   { F(rd) = src1 * src2; })
+EXEC_FUNC_FP(fadd_s,   { F(rd) = src1 + src2; })
 
-EXEC_FUNC(fmul_s, { 
-    float result = src1_f * src2_f; 
-    memcpy(&F(rd), &result, sizeof(float));
-})
+/* LP float inst */
+EXEC_FUNC_FP(fcvt_s_bf16, { F(rd) = bf16_to_f32(F_BF16(rs1)); })
+EXEC_FUNC_FP(fcvt_bf16_s, { F_BF16(rd) = f32_to_bf16(src1); })
+EXEC_FUNC_FP(fcvt_s_e4m3, { F(rd) = e4m3_to_f32(F_E4M3(rs1)); })
+EXEC_FUNC_FP(fcvt_e4m3_s, { F_E4M3(rd) = f32_to_e4m3(src1); })
+EXEC_FUNC_FP(fcvt_s_e5m2, { F(rd) = e5m2_to_f32(F_E5M2(rs1)); })
+EXEC_FUNC_FP(fcvt_e5m2_s, { F_E5M2(rd) = f32_to_e5m2(src1); })
+EXEC_FUNC_FP(fcvt_s_e2m1, { F(rd) = e2m1_to_f32(F_E2M1(rs1)); })
+EXEC_FUNC_FP(fcvt_e2m1_s, { F_E2M1(rd) = f32_to_e2m1(src1); })
 
-EXEC_FUNC(fadd_s, { 
-    float result = src1_f + src2_f; 
-    memcpy(&F(rd), &result, sizeof(float));
-})
-
-EXEC_FUNC(fcvt_w_s, { 
-    float f_val;
-    memcpy(&f_val, &l->fpr[ctx->rs1], sizeof(float));
-    G(rd) = (int32_t)f_val;
-})
-
-EXEC_FUNC(fcvt_s_bf16, {  // BF16 → FP32
-    uint32_t bits = l->fpr[ctx->rs1];
-    uint16_t bf = (uint16_t)(bits >> 16);
-    float result = bf16_to_f32(bf);
-    memcpy(&l->fpr[ctx->rd], &result, sizeof(float));
-})
-
-EXEC_FUNC(fcvt_bf16_s, {  // FP32 → BF16
-    float src_f;
-    memcpy(&src_f, &l->fpr[ctx->rs1], sizeof(float));
-    uint16_t bf = f32_to_bf16(src_f);
-    uint32_t val = (uint32_t)bf << 16;
-    l->fpr[ctx->rd] = val;
-})
-
-EXEC_FUNC(fcvt_s_e4m3, {  // E4M3 → FP32
-    uint32_t bits = l->fpr[ctx->rs1];
-    uint8_t e4m3 = (uint8_t)(bits >> 24);
-    float result = e4m3_to_f32(e4m3);
-    memcpy(&l->fpr[ctx->rd], &result, sizeof(float));
-})
-
-EXEC_FUNC(fcvt_e4m3_s, {  // FP32 → E4M3
-    float src_f;
-    memcpy(&src_f, &l->fpr[ctx->rs1], sizeof(float));
-    uint8_t e4m3 = f32_to_e4m3(src_f);
-    uint32_t val = (uint32_t)e4m3 << 24;
-    l->fpr[ctx->rd] = val;
-})
-
-EXEC_FUNC(fcvt_s_e5m2, {  // E5M2 → FP32
-    fflush(stdout);
-    uint32_t bits = l->fpr[ctx->rs1];
-    uint8_t e5m2 = (uint8_t)(bits >> 24);
-    float result = e5m2_to_f32(e5m2);
-    memcpy(&l->fpr[ctx->rd], &result, sizeof(float));
-})
-
-EXEC_FUNC(fcvt_e5m2_s, {  // FP32 → E5M2
-    float src_f;
-    memcpy(&src_f, &l->fpr[ctx->rs1], sizeof(float));
-    uint8_t e5m2 = f32_to_e5m2(src_f);
-    uint32_t val = (uint32_t)e5m2 << 24;
-    l->fpr[ctx->rd] = val;
-})
-
-EXEC_FUNC(fcvt_s_e2m1, {  // E2M1 → FP32
-    uint32_t bits = l->fpr[ctx->rs1];
-    uint8_t e2m1 = (uint8_t)(bits >> 28);  // 高4位
-    float result = e2m1_to_f32(e2m1);
-    memcpy(&l->fpr[ctx->rd], &result, sizeof(float));
-})
-
-EXEC_FUNC(fcvt_e2m1_s, {  // FP32 → E2M1
-    float src_f;
-    memcpy(&src_f, &l->fpr[ctx->rs1], sizeof(float));
-    uint8_t e2m1 = f32_to_e2m1(src_f);
-    uint32_t val = (uint32_t)e2m1 << 28;
-    l->fpr[ctx->rd] = val;
-})
-
-EXEC_FUNC(fmv_w_x, {
-    uint32_t int_val = l->gpr[ctx->rs1];
-    l->fpr[ctx->rd] = int_val;
-})
+EXEC_FUNC_FP(fmv_w_x, { F_U32(rd) = G(rs1); })
 
 
 /* ================ Instruction Table ============== */
@@ -205,6 +118,7 @@ typedef struct opcode_entry {
     X(fmul_s,       "0001000 ????? ????? ??? ????? 10100 11", TYPE_FR); \
     X(fcvt_s_w,     "1101000 00000 ????? ??? ????? 10100 11", TYPE_FI); \
     X(fcvt_w_s,     "1100000 00000 ????? ??? ????? 10100 11", TYPE_FI); \
+    /* LP float inst */ \
     X(fcvt_s_bf16,  "0100010 00000 ????? ??? ????? 10100 11", TYPE_FR); \
     X(fcvt_bf16_s,  "0100010 00001 ????? ??? ????? 10100 11", TYPE_FR); \
     X(fcvt_s_e4m3,  "0100100 00000 ????? ??? ????? 10100 11", TYPE_FR); \
@@ -293,8 +207,8 @@ static int exec_one_inst(GPGPUState *s, GPGPUWarp *warp, uint32_t inst)
     for (int lane = 0; lane < GPGPU_WARP_SIZE; lane++) {
         if (warp->active_mask & (1 << lane)) {
             entry->exec(&ctx, lane);
-            warp->lanes[lane].gpr[0] = 0;
-            warp->lanes[lane].fpr[0] = 0;
+            warp->lanes[lane].gpr[0].u32 = 0;
+            warp->lanes[lane].fpr[0].u32 = 0;
         }
     }
 
@@ -329,9 +243,9 @@ void gpgpu_core_init_warp(GPGPUWarp *warp, uint32_t pc,
         lane->mhartid = MHARTID_ENCODE(block_id_linear, warp_id, i);
         lane->active = (warp->active_mask & (1 << i)) != 0;
         /* x0 is always 0 */
-        lane->gpr[0] = 0;
+        lane->gpr[0].u32 = 0;
         /* f0 is always 0 */
-        lane->fpr[0] = 0;
+        lane->fpr[0].u32 = 0;
     }
 }
 
