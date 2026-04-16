@@ -307,10 +307,9 @@ static void __attribute__((constructor)) init_opcode_table(void)
     int idx = 0;
     
 #ifdef DEBUG_OPCODE_TABLE
-    printf("\n=== Initializing Opcode Table ===\n");
-    printf("Enum values: TYPE_R=%d, TYPE_I=%d, TYPE_U=%d, TYPE_S=%d, TYPE_J=%d, TYPE_B=%d, TYPE_CSR=%d, TYPE_FR=%d, TYPE_FI=%d, TYPE_FS=%d, TYPE_F4=%d\n",
-           TYPE_R, TYPE_I, TYPE_U, TYPE_S, TYPE_J, TYPE_B, TYPE_CSR, TYPE_FR, TYPE_FI, TYPE_FS, TYPE_F4);
-    fflush(stdout);
+    LogInfo("=== Initializing Opcode Table ===");
+    LogInfo("Enum values: TYPE_R=%d, TYPE_I=%d, TYPE_U=%d, TYPE_S=%d, TYPE_J=%d, TYPE_B=%d, TYPE_CSR=%d, TYPE_FR=%d, TYPE_FI=%d, TYPE_FS=%d, TYPE_F4=%d",
+            TYPE_R, TYPE_I, TYPE_U, TYPE_S, TYPE_J, TYPE_B, TYPE_CSR, TYPE_FR, TYPE_FI, TYPE_FS, TYPE_F4);
 #endif
     
 #define X(name, pattern, op_type) \
@@ -319,19 +318,21 @@ static void __attribute__((constructor)) init_opcode_table(void)
         opcode_table[idx].match = pattern_to_match(pattern); \
         opcode_table[idx].exec = exec_##name; \
         opcode_table[idx].type = op_type; \
-        printf("entry %2d: %-10s mask=0x%08x match=0x%08x type=%d (%s)\n", \
-               idx, #name, opcode_table[idx].mask, opcode_table[idx].match, op_type, \
-               op_type == TYPE_R ? "TYPE_R" : \
-               op_type == TYPE_I ? "TYPE_I" : \
-               op_type == TYPE_U ? "TYPE_U" : \
-               op_type == TYPE_S ? "TYPE_S" : \
-               op_type == TYPE_J ? "TYPE_J" : \
-               op_type == TYPE_B ? "TYPE_B" : \
-               op_type == TYPE_CSR ? "TYPE_CSR" : \
-               op_type == TYPE_FR ? "TYPE_FR" : \
-               op_type == TYPE_FI ? "TYPE_FI" : \
-               op_type == TYPE_FS ? "TYPE_FS" : \
-               op_type == TYPE_F4 ? "TYPE_F4" : "UNKNOWN"); \
+        IF_DEBUG_OPCODE_TABLE( \
+            LogInfo("entry %2d: %-10s mask=0x%08x match=0x%08x type=%d (%s)", \
+                    idx, #name, opcode_table[idx].mask, opcode_table[idx].match, op_type, \
+                    op_type == TYPE_R ? "TYPE_R" : \
+                    op_type == TYPE_I ? "TYPE_I" : \
+                    op_type == TYPE_U ? "TYPE_U" : \
+                    op_type == TYPE_S ? "TYPE_S" : \
+                    op_type == TYPE_J ? "TYPE_J" : \
+                    op_type == TYPE_B ? "TYPE_B" : \
+                    op_type == TYPE_CSR ? "TYPE_CSR" : \
+                    op_type == TYPE_FR ? "TYPE_FR" : \
+                    op_type == TYPE_FI ? "TYPE_FI" : \
+                    op_type == TYPE_FS ? "TYPE_FS" : \
+                    op_type == TYPE_F4 ? "TYPE_F4" : "UNKNOWN"); \
+        ) \
         idx++; \
     } while(0)
     
@@ -340,11 +341,10 @@ static void __attribute__((constructor)) init_opcode_table(void)
 #undef X
     
     opcode_table_count = idx;
-    
+
 #ifdef DEBUG_OPCODE_TABLE
-    printf("Total entries initialized: %ld\n", opcode_table_count);
-    printf("================================\n\n");
-    fflush(stdout);
+    LogInfo("Total entries initialized: %ld", opcode_table_count);
+    LogInfo("================================");
 #endif
 }
 

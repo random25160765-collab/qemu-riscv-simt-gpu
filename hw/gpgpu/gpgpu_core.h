@@ -13,6 +13,10 @@
 #ifndef HW_GPGPU_CORE_H
 #define HW_GPGPU_CORE_H
 
+/* 所有的调试选项在这里调整 */
+#define DEBUG_OPCODE_TABLE
+#define DEBUG_INST
+
 #include "qemu/osdep.h"
 #include "fpu/softfloat.h"
 #include "lpfp.h"
