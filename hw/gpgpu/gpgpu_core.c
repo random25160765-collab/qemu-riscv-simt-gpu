@@ -12,6 +12,10 @@
 #include "qemu/host-utils.h"
 #include "gpgpu.h"
 #include "gpgpu_core.h"
+#include "lpfp.h"
+#include "memory.h"
+#include "inst.h"
+#include "utils.h"
 
 /* Define types of instruction */
 typedef enum {
@@ -503,6 +507,8 @@ static int exec_one_inst(GPGPUState *s, GPGPUWarp *warp, uint32_t inst)
     get_warp_ctx(&ctx, inst, entry->type);
     
     if (entry->match == MATCH_EBREAK) {
+        // ebreak 指令：清零所有活跃 Lane 的 active_mask 位
+        warp->active_mask = 0;
         return 1;
     }
 
@@ -510,6 +516,15 @@ static int exec_one_inst(GPGPUState *s, GPGPUWarp *warp, uint32_t inst)
         if (warp->active_mask & (1 << lane)) {
             entry->exec(&ctx, lane);
             warp->lanes[lane].gpr[0].u32 = 0;
+            
+            // 检查是否是 ret 指令（jalr x0, 0(x1)）
+            if (entry->type == TYPE_I && (inst & 0x7f) == 0x67 && ctx.rd == 0 && ctx.rs1 == 1 && ctx.imm == 0) {
+                // 检查 ra (x1) 是否为 0
+                if (warp->lanes[lane].gpr[1].u32 == 0) {
+                    // 清零该 Lane 的 active_mask 位
+                    warp->active_mask &= ~(1 << lane);
+                }
+            }
         }
     }
 
@@ -556,6 +571,10 @@ int gpgpu_core_exec_warp(GPGPUState *s, GPGPUWarp *warp, uint32_t max_cycles)
     uint32_t cycles = 0;
     
     while (cycles < max_cycles) {
+        // 检查 active_mask 是否为 0
+        if (warp->active_mask == 0) {
+            return 0;
+        }
 
         uint32_t pc = warp->lanes[0].pc;
         if (pc >= s->vram_size) {
@@ -570,16 +589,12 @@ int gpgpu_core_exec_warp(GPGPUState *s, GPGPUWarp *warp, uint32_t max_cycles)
         } else if (ret == -1) {
             return -1;
         }
-        
-        if (ret == 1) {
-            return 0;
-        } else if (ret == -1) {
-            return -1;
-        }
 
         cycles++;
     }
     
+    // 超出最大周期限制，设置 KERNEL_FAULT 错误状态
+    s->error_status |= GPGPU_ERR_KERNEL_FAULT;
     return -1;
 }
 
@@ -616,7 +631,7 @@ int gpgpu_core_exec_kernel(GPGPUState *s)
                     gpgpu_core_init_warp(&warp, kernel_addr, thread_id_base, 
                                         block_id, num_threads, 
                                         warp_id, block_id_linear);
-                    int ret = gpgpu_core_exec_warp(s, &warp, 1000);
+                    int ret = gpgpu_core_exec_warp(s, &warp, 100000);
                     if (ret != 0) {
                         return -1;
                     }

@@ -22,6 +22,9 @@
 #include "gpgpu.h"
 #include "gpgpu_core.h"
 
+/* Forward declarations */
+static void gpgpu_kernel_complete(void *opaque);
+
 /* TODO: Implement MMIO control register read */
 static uint64_t gpgpu_ctrl_read(void *opaque, hwaddr addr, unsigned size)
 {
@@ -34,6 +37,11 @@ static uint64_t gpgpu_ctrl_read(void *opaque, hwaddr addr, unsigned size)
             break;
         case GPGPU_REG_DEV_VERSION:
             val = GPGPU_DEV_VERSION_VALUE;
+            break;
+        case GPGPU_REG_DEV_CAPS:
+            val = (gpu->num_cus & 0xFF) |
+                  ((gpu->warps_per_cu & 0xFF) << 8) |
+                  ((gpu->warp_size & 0xFF) << 16);
             break;
         case GPGPU_REG_VRAM_SIZE_LO:
             val = 0x04000000;
@@ -55,6 +63,21 @@ static uint64_t gpgpu_ctrl_read(void *opaque, hwaddr addr, unsigned size)
             break;
         case GPGPU_REG_IRQ_STATUS:
             val = gpu->irq_status;
+            break;
+        case GPGPU_REG_KERNEL_ADDR_LO:
+            val = gpu->kernel.kernel_addr;
+            break;
+        case GPGPU_REG_KERNEL_ADDR_HI:
+            val = gpu->kernel.kernel_addr >> 32;
+            break;
+        case GPGPU_REG_KERNEL_ARGS_LO:
+            val = gpu->kernel.kernel_args;
+            break;
+        case GPGPU_REG_KERNEL_ARGS_HI:
+            val = gpu->kernel.kernel_args >> 32;
+            break;
+        case GPGPU_REG_SHARED_MEM_SIZE:
+            val = gpu->kernel.shared_mem_size;
             break;
         case GPGPU_REG_GRID_DIM_X:
             val = gpu->kernel.grid_dim[0];
@@ -134,22 +157,41 @@ static void gpgpu_ctrl_write(void *opaque, hwaddr addr, uint64_t val,
 
     switch (addr) {
         case GPGPU_REG_GLOBAL_CTRL:
-            gpu->global_ctrl = val;
-            if (val == GPGPU_CTRL_RESET) {
+            if (val & GPGPU_CTRL_RESET) {
+                gpu->global_ctrl = 0;
+                gpu->global_status = GPGPU_STATUS_READY;
+                gpu->error_status = 0;
+                gpu->irq_status = 0;
                 memset(&gpu->simt, 0, sizeof(gpu->simt));
+                memset(&gpu->kernel, 0, sizeof(gpu->kernel));
+                memset(&gpu->dma, 0, sizeof(gpu->dma));
+            } else {
+                gpu->global_ctrl = val;
             }
             break;
-        case GPGPU_REG_GLOBAL_STATUS:
-            gpu->global_status = val;
-            break;
         case GPGPU_REG_ERROR_STATUS:
-            gpu->error_status = val;
+            gpu->error_status &= ~val;
             break;
         case GPGPU_REG_IRQ_ENABLE:
             gpu->irq_enable = val;
             break;
-        case GPGPU_REG_IRQ_STATUS:
-            gpu->irq_status = val;
+        case GPGPU_REG_IRQ_ACK:
+            gpu->irq_status &= ~val;
+            break;
+        case GPGPU_REG_KERNEL_ADDR_LO:
+            gpu->kernel.kernel_addr = (gpu->kernel.kernel_addr & 0xFFFFFFFF00000000ULL) | val;
+            break;
+        case GPGPU_REG_KERNEL_ADDR_HI:
+            gpu->kernel.kernel_addr = (gpu->kernel.kernel_addr & 0x00000000FFFFFFFFULL) | (val << 32);
+            break;
+        case GPGPU_REG_KERNEL_ARGS_LO:
+            gpu->kernel.kernel_args = (gpu->kernel.kernel_args & 0xFFFFFFFF00000000ULL) | val;
+            break;
+        case GPGPU_REG_KERNEL_ARGS_HI:
+            gpu->kernel.kernel_args = (gpu->kernel.kernel_args & 0x00000000FFFFFFFFULL) | (val << 32);
+            break;
+        case GPGPU_REG_SHARED_MEM_SIZE:
+            gpu->kernel.shared_mem_size = val;
             break;
         case GPGPU_REG_GRID_DIM_X:
             gpu->kernel.grid_dim[0] = val;
@@ -170,9 +212,18 @@ static void gpgpu_ctrl_write(void *opaque, hwaddr addr, uint64_t val,
             gpu->kernel.block_dim[2] = val;
             break;
         case GPGPU_REG_DISPATCH:
+            if (gpu->global_status != GPGPU_STATUS_READY ||
+                gpu->kernel.grid_dim[0] == 0 || gpu->kernel.grid_dim[1] == 0 ||
+                gpu->kernel.grid_dim[2] == 0 ||
+                gpu->kernel.block_dim[0] == 0 || gpu->kernel.block_dim[1] == 0 ||
+                gpu->kernel.block_dim[2] == 0 ||
+                gpu->kernel.kernel_addr >= gpu->vram_size) {
+                gpu->error_status |= GPGPU_ERR_INVALID_CMD;
+                break;
+            }
             gpu->global_status = GPGPU_STATUS_BUSY;
-            timer_mod_ns(gpu->kernel_timer,
-                          qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) + 1000 * 1000);
+            /* 同步执行kernel，直接调用完成处理函数 */
+            gpgpu_kernel_complete(gpu);
             break;
         case GPGPU_REG_DMA_SRC_LO:
             gpu->dma.src_addr = (gpu->dma.src_addr & 0xFFFFFFFF00000000ULL) | val;
@@ -190,10 +241,26 @@ static void gpgpu_ctrl_write(void *opaque, hwaddr addr, uint64_t val,
             gpu->dma.size = val;
             break;
         case GPGPU_REG_DMA_CTRL:
+            if (val & GPGPU_DMA_START) {
+                bool dir = (val & GPGPU_DMA_DIR_FROM_VRAM) != 0;
+                uint64_t src = gpu->dma.src_addr;
+                uint64_t dst = gpu->dma.dst_addr;
+                uint32_t _size = gpu->dma.size;
+
+                if (dir) {
+                    memcpy(gpu->vram_ptr + dst, gpu->vram_ptr + src, _size);
+                } else {
+                    memcpy(gpu->vram_ptr + dst, (void *)(uintptr_t)src, _size);
+                }
+
+                gpu->dma.ctrl |= GPGPU_DMA_BUSY;
+                gpu->dma.status = GPGPU_DMA_BUSY;
+                timer_mod_ns(gpu->dma_timer,
+                             qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) + 1000 * 1000);
+            }
             gpu->dma.ctrl = val;
             break;
         case GPGPU_REG_DMA_STATUS:
-            gpu->dma.status = val;
             break;
         case GPGPU_REG_THREAD_ID_X:
             gpu->simt.thread_id[0] = val;
@@ -218,6 +285,8 @@ static void gpgpu_ctrl_write(void *opaque, hwaddr addr, uint64_t val,
             break;
         case GPGPU_REG_LANE_ID:
             gpu->simt.lane_id = val;
+            break;
+        case GPGPU_REG_BARRIER:
             break;
         case GPGPU_REG_THREAD_MASK:
             gpu->simt.thread_mask = val;
@@ -324,7 +393,23 @@ static const MemoryRegionOps gpgpu_doorbell_ops = {
 /* TODO: Implement DMA completion handler */
 static void gpgpu_dma_complete(void *opaque)
 {
-    (void)opaque;
+    GPGPUState *s = GPGPU(opaque);
+
+    s->dma.ctrl &= ~GPGPU_DMA_BUSY;
+    s->dma.status = GPGPU_DMA_COMPLETE;
+
+    if (s->dma.ctrl & GPGPU_DMA_IRQ_ENABLE) {
+        s->irq_status |= GPGPU_IRQ_DMA_DONE;
+        if (s->irq_enable & GPGPU_IRQ_DMA_DONE) {
+            if (msix_enabled(&s->parent_obj)) {
+                msix_notify(&s->parent_obj, GPGPU_MSIX_VEC_DMA);
+            } else if (msi_enabled(&s->parent_obj)) {
+                msi_notify(&s->parent_obj, GPGPU_MSIX_VEC_DMA);
+            } else {
+                pci_set_irq(&s->parent_obj, 1);
+            }
+        }
+    }
 }
 
 /* TODO: Implement kernel completion handler */
@@ -338,14 +423,26 @@ static void gpgpu_kernel_complete(void *opaque)
         s->global_status = GPGPU_STATUS_READY;
         s->irq_status |= GPGPU_IRQ_KERNEL_DONE;
         if (s->irq_enable & GPGPU_IRQ_KERNEL_DONE) {
-            msix_notify(&s->parent_obj, GPGPU_MSIX_VEC_KERNEL);
+            if (msix_enabled(&s->parent_obj)) {
+                msix_notify(&s->parent_obj, GPGPU_MSIX_VEC_KERNEL);
+            } else if (msi_enabled(&s->parent_obj)) {
+                msi_notify(&s->parent_obj, GPGPU_MSIX_VEC_KERNEL);
+            } else {
+                pci_set_irq(&s->parent_obj, 1);
+            }
         }
     } else {
         s->global_status = GPGPU_STATUS_ERROR;
         s->error_status |= GPGPU_ERR_KERNEL_FAULT;
         s->irq_status |= GPGPU_IRQ_ERROR;
         if (s->irq_enable & GPGPU_IRQ_ERROR) {
-            msix_notify(&s->parent_obj, GPGPU_MSIX_VEC_ERROR);
+            if (msix_enabled(&s->parent_obj)) {
+                msix_notify(&s->parent_obj, GPGPU_MSIX_VEC_ERROR);
+            } else if (msi_enabled(&s->parent_obj)) {
+                msi_notify(&s->parent_obj, GPGPU_MSIX_VEC_ERROR);
+            } else {
+                pci_set_irq(&s->parent_obj, 1);
+            }
         }
     }
 }

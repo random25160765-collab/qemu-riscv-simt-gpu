@@ -3,6 +3,14 @@
 
 #include "qemu/osdep.h"
 
+typedef struct GPGPUState GPGPUState;
+
+static inline void out_of_bound(GPGPUState *s, uint32_t addr, int len) {
+    if (addr + len > s->vram_size) {
+        qemu_log_mask(LOG_GUEST_ERROR, "VRAM read out of bounds: addr=0x%08x, len=%d\n", addr, len);
+    }
+}
+
 /* Memory IO function */
 static inline uint32_t get_read_addr(void *addr, int len) {
     switch (len) {
@@ -21,12 +29,6 @@ static inline void get_write_addr(void *addr, int len, uint32_t data) {
     }
 }
 
-static void out_of_bound(GPGPUState *s, uint32_t addr, int len) {
-    if (addr + len > s->vram_size) {
-        qemu_log_mask(LOG_GUEST_ERROR, "VRAM read out of bounds: addr=0x%08x, len=%d\n", addr, len);;
-    }
-}
-
 static uint32_t __attribute__((unused)) vram_read(GPGPUState *s, uint32_t addr, int len) {
     out_of_bound(s, addr, len);
     return get_read_addr(s->vram_ptr + addr, len);
@@ -36,5 +38,8 @@ static void __attribute__((unused)) vram_write(GPGPUState *s, uint32_t addr, int
     out_of_bound(s, addr, len);
     get_write_addr(s->vram_ptr + addr, len, data);
 }
+
+extern uint32_t gpu_read(GPGPUState *s, uint32_t addr, int len);
+extern void gpu_write(GPGPUState *s, uint32_t addr, int len, uint32_t data);
 
 #endif /* MEMORY_H */

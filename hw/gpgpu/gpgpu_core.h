@@ -19,10 +19,6 @@
 
 #include "qemu/osdep.h"
 #include "fpu/softfloat.h"
-#include "lpfp.h"
-#include "memory.h"
-#include "inst.h"
-#include "utils.h"
 
 /* 前向声明 */
 typedef struct GPGPUState GPGPUState;
