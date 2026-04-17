@@ -206,18 +206,35 @@ static long gpgpu_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
         break;
 
     case GPGPU_IOCTL_WAIT_KERNEL:
-        // 等待中断唤醒，或超时（5秒）
-        ret = wait_event_interruptible_timeout(gdev->kernel_wq,
-                                               gdev->kernel_completed || gdev->error_occurred,
-                                               5 * HZ);
-        if (ret == 0) {
-            dev_err(&gdev->pdev->dev, "Kernel wait timeout\n");
-            return -ETIMEDOUT;
+        if (gdev->irq_enabled) {
+            // 有中断支持：等待中断唤醒，或超时（5秒）
+            ret = wait_event_interruptible_timeout(gdev->kernel_wq,
+                                                   gdev->kernel_completed || gdev->error_occurred,
+                                                   5 * HZ);
+            if (ret == 0) {
+                dev_err(&gdev->pdev->dev, "Kernel wait timeout\n");
+                return -ETIMEDOUT;
+            }
+            if (ret < 0) {
+                dev_err(&gdev->pdev->dev, "Wait interrupted: %d\n", ret);
+                return -ERESTARTSYS;
+            }
+        } else {
+            // 无中断支持：轮询模式
+            int timeout = 5000000;  // 5秒超时（微秒）
+            while (timeout-- > 0) {
+                status = gpgpu_readl(gdev, GPGPU_REG_GLOBAL_STATUS);
+                if (!(status & GPGPU_STATUS_BUSY)) {
+                    break;
+                }
+                udelay(1);  // 等待1微秒
+            }
+            if (timeout <= 0) {
+                dev_err(&gdev->pdev->dev, "Kernel poll timeout\n");
+                return -ETIMEDOUT;
+            }
         }
-        if (ret < 0) {
-            dev_err(&gdev->pdev->dev, "Wait interrupted: %d\n", ret);
-            return -ERESTARTSYS;
-        }
+        
         if (gdev->error_occurred) {
             dev_err(&gdev->pdev->dev, "Kernel execution error\n");
             gdev->error_occurred = 0;
@@ -280,8 +297,8 @@ static long gpgpu_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
         gdev->dma_in_progress = true;
         gpgpu_writel(gdev, GPGPU_REG_DMA_CTRL, ctrl);
 
-        // 如果启用了中断，等待中断完成
-        if (ctrl & GPGPU_DMA_IRQ_ENABLE) {
+        // 如果启用了中断且有中断支持，等待中断完成
+        if ((ctrl & GPGPU_DMA_IRQ_ENABLE) && gdev->irq_enabled) {
             ret = wait_event_interruptible_timeout(gdev->kernel_wq,
                                                    !gdev->dma_in_progress,
                                                    5 * HZ);
@@ -290,7 +307,7 @@ static long gpgpu_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
                 return -ETIMEDOUT;
             }
         } else {
-            // 轮询等待完成
+            // 轮询等待完成（无中断支持或中断被禁用）
             timeout = 1000000;  // 最多等待 1M 次
             while (timeout-- > 0) {
                 dma_status = gpgpu_readl(gdev, GPGPU_REG_DMA_STATUS);
@@ -461,23 +478,49 @@ static int gpgpu_probe(struct pci_dev *pdev, const struct pci_device_id *id)
             // 3. 最后尝试传统 INTx (flags = 0)
             ret = pci_alloc_irq_vectors(pdev, 1, 1, 0);
             if (ret < 0) {
-                dev_err(&pdev->dev, "All IRQ types failed: %d\n", ret);
+                dev_warn(&pdev->dev, "All IRQ types failed: %d, continuing without interrupts\n", ret);
+                dev_warn(&pdev->dev, "Device will work in polling mode only\n");
+                gdev->irq = 0;
+                gdev->irq_enabled = false;
+            } else {
+                gdev->irq = pci_irq_vector(pdev, 0);
+                dev_info(&pdev->dev, "Using IRQ %d\n", gdev->irq);
+
+                // 注册中断处理函数
+                ret = request_irq(gdev->irq, gpgpu_irq_handler, 0, "gpgpu", gdev);
+                if (ret) {
+                    dev_err(&pdev->dev, "Failed to request IRQ %d: %d\n", gdev->irq, ret);
+                    pci_free_irq_vectors(pdev);
+                    goto err_free_id;
+                }
+                gdev->irq_enabled = true;
+            }
+        } else {
+            gdev->irq = pci_irq_vector(pdev, 0);
+            dev_info(&pdev->dev, "Using IRQ %d\n", gdev->irq);
+
+            // 注册中断处理函数
+            ret = request_irq(gdev->irq, gpgpu_irq_handler, 0, "gpgpu", gdev);
+            if (ret) {
+                dev_err(&pdev->dev, "Failed to request IRQ %d: %d\n", gdev->irq, ret);
+                pci_free_irq_vectors(pdev);
                 goto err_free_id;
             }
+            gdev->irq_enabled = true;
         }
-    }
-    
-    gdev->irq = pci_irq_vector(pdev, 0);
-    dev_info(&pdev->dev, "Using IRQ %d\n", gdev->irq);
+    } else {
+        gdev->irq = pci_irq_vector(pdev, 0);
+        dev_info(&pdev->dev, "Using IRQ %d\n", gdev->irq);
 
-    // 注册中断处理函数
-    ret = request_irq(gdev->irq, gpgpu_irq_handler, 0, "gpgpu", gdev);
-    if (ret) {
-        dev_err(&pdev->dev, "Failed to request IRQ %d: %d\n", gdev->irq, ret);
-        pci_free_irq_vectors(pdev);
-        goto err_free_id;
+        // 注册中断处理函数
+        ret = request_irq(gdev->irq, gpgpu_irq_handler, 0, "gpgpu", gdev);
+        if (ret) {
+            dev_err(&pdev->dev, "Failed to request IRQ %d: %d\n", gdev->irq, ret);
+            pci_free_irq_vectors(pdev);
+            goto err_free_id;
+        }
+        gdev->irq_enabled = true;
     }
-    gdev->irq_enabled = true;
 
     // 启用设备中断（在硬件寄存器中）
     gpgpu_writel(gdev, GPGPU_REG_IRQ_ENABLE, 

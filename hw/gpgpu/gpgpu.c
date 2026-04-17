@@ -484,15 +484,23 @@ static void gpgpu_realize(PCIDevice *pdev, Error **errp)
                      PCI_BASE_ADDRESS_SPACE_MEMORY,
                      &s->doorbell_mmio);
 
+    // 尝试初始化 MSI-X
     if (msix_init(pdev, GPGPU_MSIX_VECTORS,
                   &s->ctrl_mmio, 0, 0xFE000,
                   &s->ctrl_mmio, 0, 0xFF000,
                   0, errp)) {
-        g_free(s->vram_ptr);
-        return;
+        // MSI-X 初始化失败，尝试 MSI
+        if (msi_init(pdev, 0, 1, true, false, errp)) {
+            // MSI 也失败，使用传统中断
+            // 传统中断不需要特殊初始化，PCI 配置已经设置了中断引脚
+            qemu_log_mask(LOG_GUEST_ERROR, "GPGPU: Both MSI-X and MSI failed, using legacy INTx\n");
+        } else {
+            qemu_log_mask(LOG_GUEST_ERROR, "GPGPU: MSI-X failed, using MSI\n");
+        }
+    } else {
+        // MSI-X 初始化成功，也初始化 MSI 作为备选
+        msi_init(pdev, 0, 1, true, false, errp);
     }
-
-    msi_init(pdev, 0, 1, true, false, errp);
 
     s->dma_timer = timer_new_ms(QEMU_CLOCK_VIRTUAL, gpgpu_dma_complete, s);
     s->kernel_timer = timer_new_ms(QEMU_CLOCK_VIRTUAL,

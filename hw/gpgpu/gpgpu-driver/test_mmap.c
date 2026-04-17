@@ -15,7 +15,7 @@
 #include <sys/stat.h>
 #include <errno.h>
 
-#define DEVICE_PATH     "/dev/gpgpu"
+#define DEVICE_PATH     "/dev/gpgpu0"
 #define VRAM_SIZE       (64 * 1024 * 1024)  // 64MB
 #define TEST_SIZE       4096                // 测试 4KB
 
