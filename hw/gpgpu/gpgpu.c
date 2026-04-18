@@ -212,6 +212,10 @@ static void gpgpu_ctrl_write(void *opaque, hwaddr addr, uint64_t val,
             gpu->kernel.block_dim[2] = val;
             break;
         case GPGPU_REG_DISPATCH:
+            /* Clear previous error status when starting new kernel */
+            gpu->error_status = 0;
+            gpu->irq_status &= ~GPGPU_IRQ_ERROR;
+            
             if (gpu->global_status != GPGPU_STATUS_READY ||
                 gpu->kernel.grid_dim[0] == 0 || gpu->kernel.grid_dim[1] == 0 ||
                 gpu->kernel.grid_dim[2] == 0 ||

@@ -162,6 +162,8 @@ static irqreturn_t gpgpu_irq_handler(int irq, void *data)
 static long gpgpu_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 {
     struct gpgpu_dev *gdev = filp->private_data;
+    dev_info(&gdev->pdev->dev, "ioctl: cmd=0x%x, nr=%d\n", cmd, _IOC_NR(cmd));
+    
     u32 grid[3], block[3];
     u32 status;
     int ret = 0;
@@ -270,6 +272,18 @@ static long gpgpu_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
         if (copy_from_user(&params, (void __user *)arg, sizeof(params)))
             return -EFAULT;
 
+        // 验证参数
+        if (params.size == 0) {
+            dev_err(&gdev->pdev->dev, "DMA transfer size cannot be zero\n");
+            return -EINVAL;
+        }
+
+        if (params.size > gdev->bar2_size) {
+            dev_err(&gdev->pdev->dev, "DMA size %u exceeds VRAM size %llu\n",
+                    params.size, (u64)gdev->bar2_size);
+            return -EINVAL;
+        }
+
         // 检查是否已有 DMA 在进行
         dma_status = gpgpu_readl(gdev, GPGPU_REG_DMA_STATUS);
         if (dma_status & GPGPU_DMA_BUSY) {
@@ -304,7 +318,13 @@ static long gpgpu_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
                                                    5 * HZ);
             if (ret == 0) {
                 dev_err(&gdev->pdev->dev, "DMA wait timeout\n");
+                gdev->dma_in_progress = false;
                 return -ETIMEDOUT;
+            }
+            if (ret < 0) {
+                dev_err(&gdev->pdev->dev, "DMA wait interrupted: %d\n", ret);
+                gdev->dma_in_progress = false;
+                return -ERESTARTSYS;
             }
         } else {
             // 轮询等待完成（无中断支持或中断被禁用）
@@ -313,10 +333,11 @@ static long gpgpu_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
                 dma_status = gpgpu_readl(gdev, GPGPU_REG_DMA_STATUS);
                 if (!(dma_status & GPGPU_DMA_BUSY))
                     break;
-                cpu_relax();
+                udelay(10);  // 等待10微秒
             }
             if (timeout <= 0) {
                 dev_err(&gdev->pdev->dev, "DMA poll timeout\n");
+                gdev->dma_in_progress = false;
                 return -ETIMEDOUT;
             }
         }
@@ -324,11 +345,16 @@ static long gpgpu_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
         // 检查 DMA 错误
         dma_status = gpgpu_readl(gdev, GPGPU_REG_DMA_STATUS);
         if (dma_status & GPGPU_DMA_ERROR) {
-            dev_err(&gdev->pdev->dev, "DMA error occurred\n");
+            dev_err(&gdev->pdev->dev, "DMA error occurred, status=0x%x\n", dma_status);
+            gdev->dma_in_progress = false;
             return -EIO;
         }
 
-        dev_info(&gdev->pdev->dev, "DMA completed successfully\n");
+        // 更新状态返回给用户空间
+        if (copy_to_user((void __user *)arg, &params, sizeof(params)))
+            return -EFAULT;
+
+        dev_info(&gdev->pdev->dev, "DMA completed successfully, status=0x%x\n", dma_status);
         break;
     }
 
@@ -338,6 +364,57 @@ static long gpgpu_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
         msleep(10);
         dev_info(&gdev->pdev->dev, "Device reset\n");
         break;
+
+    case GPGPU_IOCTL_LAUNCH_PARAMS:
+    {
+        struct gpgpu_kernel_params params;
+        u32 status;
+        
+        if (copy_from_user(&params, (void __user *)arg, sizeof(params)))
+            return -EFAULT;
+            
+        // 检查设备是否就绪
+        status = gpgpu_readl(gdev, GPGPU_REG_GLOBAL_STATUS);
+        if (!(status & GPGPU_STATUS_READY)) {
+            dev_warn(&gdev->pdev->dev, "Device not ready, status=0x%x\n", status);
+            return -EBUSY;
+        }
+        
+        // 设置网格维度
+        gpgpu_writel(gdev, GPGPU_REG_GRID_DIM_X, params.grid_dim[0]);
+        gpgpu_writel(gdev, GPGPU_REG_GRID_DIM_Y, params.grid_dim[1]);
+        gpgpu_writel(gdev, GPGPU_REG_GRID_DIM_Z, params.grid_dim[2]);
+        
+        // 设置线程块维度
+        gpgpu_writel(gdev, GPGPU_REG_BLOCK_DIM_X, params.block_dim[0]);
+        gpgpu_writel(gdev, GPGPU_REG_BLOCK_DIM_Y, params.block_dim[1]);
+        gpgpu_writel(gdev, GPGPU_REG_BLOCK_DIM_Z, params.block_dim[2]);
+        
+        // 设置内核地址
+        gpgpu_writel(gdev, GPGPU_REG_KERNEL_ADDR_LO, lower_32_bits(params.kernel_addr));
+        gpgpu_writel(gdev, GPGPU_REG_KERNEL_ADDR_HI, upper_32_bits(params.kernel_addr));
+        
+        // 设置参数地址
+        gpgpu_writel(gdev, GPGPU_REG_KERNEL_ARGS_LO, lower_32_bits(params.args_addr));
+        gpgpu_writel(gdev, GPGPU_REG_KERNEL_ARGS_HI, upper_32_bits(params.args_addr));
+        
+        // 设置共享内存大小
+        gpgpu_writel(gdev, GPGPU_REG_SHARED_MEM_SIZE, params.shared_mem);
+        
+        // 重置完成标志
+        gdev->kernel_completed = 0;
+        gdev->error_occurred = 0;
+        
+        // 启动内核
+        gpgpu_writel(gdev, GPGPU_REG_DISPATCH, 1);
+        
+        dev_info(&gdev->pdev->dev, 
+                 "Kernel launched with params: grid=(%u,%u,%u) block=(%u,%u,%u) kernel=0x%llx args=0x%llx shared=%u\n",
+                 params.grid_dim[0], params.grid_dim[1], params.grid_dim[2],
+                 params.block_dim[0], params.block_dim[1], params.block_dim[2],
+                 params.kernel_addr, params.args_addr, params.shared_mem);
+        break;
+    }
 
     default:
         dev_dbg(&gdev->pdev->dev, "Unknown ioctl cmd=0x%x\n", cmd);

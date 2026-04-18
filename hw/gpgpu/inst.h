@@ -74,8 +74,8 @@ static inline uint32_t pattern_to_match(const char *pattern) {
 #define F_E2M1(i)   (l->fpr[ctx->i].e2m1)
 
 /* ======== Memory ======== */
-#define Mw(addr, len, data) vram_write(ctx->s, addr, len, data)
-#define Mr(addr, len) vram_read(ctx->s, addr, len)
+#define Mw(addr, len, data) gpu_write(ctx->s, addr, len, data)
+#define Mr(addr, len) gpu_read(ctx->s, addr, len)
 
 /* ======== IMM ======== */
 #define immI(i)   (SEXT(BITS(i, 31, 20), 12))

@@ -29,12 +29,12 @@ static inline void get_write_addr(void *addr, int len, uint32_t data) {
     }
 }
 
-static uint32_t __attribute__((unused)) vram_read(GPGPUState *s, uint32_t addr, int len) {
+static uint32_t __attribute__((unused)) memory_read(GPGPUState *s, uint32_t addr, int len) {
     out_of_bound(s, addr, len);
     return get_read_addr(s->vram_ptr + addr, len);
 }
 
-static void __attribute__((unused)) vram_write(GPGPUState *s, uint32_t addr, int len, uint32_t data) {
+static void __attribute__((unused)) memory_write(GPGPUState *s, uint32_t addr, int len, uint32_t data) {
     out_of_bound(s, addr, len);
     get_write_addr(s->vram_ptr + addr, len, data);
 }

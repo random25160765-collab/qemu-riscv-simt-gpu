@@ -437,11 +437,9 @@ static void __attribute__((constructor)) init_opcode_table(void)
 {
     int idx = 0;
     
-#ifdef DEBUG_OPCODE_TABLE
-    LogInfo("=== Initializing Opcode Table ===");
-    LogInfo("Enum values: TYPE_R=%d, TYPE_I=%d, TYPE_U=%d, TYPE_S=%d, TYPE_J=%d, TYPE_B=%d, TYPE_CSR=%d, TYPE_FR=%d, TYPE_FI=%d, TYPE_FS=%d, TYPE_F4=%d",
+    qemu_log("=== Initializing Opcode Table ===");
+    qemu_log("Enum values: TYPE_R=%d, TYPE_I=%d, TYPE_U=%d, TYPE_S=%d, TYPE_J=%d, TYPE_B=%d, TYPE_CSR=%d, TYPE_FR=%d, TYPE_FI=%d, TYPE_FS=%d, TYPE_F4=%d",
             TYPE_R, TYPE_I, TYPE_U, TYPE_S, TYPE_J, TYPE_B, TYPE_CSR, TYPE_FR, TYPE_FI, TYPE_FS, TYPE_F4);
-#endif
     
 #define X(name, pattern, op_type) \
     do { \
@@ -449,8 +447,7 @@ static void __attribute__((constructor)) init_opcode_table(void)
         opcode_table[idx].match = pattern_to_match(pattern); \
         opcode_table[idx].exec = exec_##name; \
         opcode_table[idx].type = op_type; \
-        IF_DEBUG_OPCODE_TABLE( \
-            LogInfo("entry %2d: %-10s mask=0x%08x match=0x%08x type=%d (%s)", \
+            qemu_log("entry %2d: %-10s mask=0x%08x match=0x%08x type=%d (%s)", \
                     idx, #name, opcode_table[idx].mask, opcode_table[idx].match, op_type, \
                     op_type == TYPE_R ? "TYPE_R" : \
                     op_type == TYPE_I ? "TYPE_I" : \
@@ -463,7 +460,6 @@ static void __attribute__((constructor)) init_opcode_table(void)
                     op_type == TYPE_FI ? "TYPE_FI" : \
                     op_type == TYPE_FS ? "TYPE_FS" : \
                     op_type == TYPE_F4 ? "TYPE_F4" : "UNKNOWN"); \
-        ) \
         idx++; \
     } while(0)
     
@@ -473,10 +469,8 @@ static void __attribute__((constructor)) init_opcode_table(void)
     
     opcode_table_count = idx;
 
-#ifdef DEBUG_OPCODE_TABLE
-    LogInfo("Total entries initialized: %ld", opcode_table_count);
-    LogInfo("================================");
-#endif
+    qemu_log("Total entries initialized: %ld", opcode_table_count);
+    qemu_log("================================");
 }
 
 static opcode_entry_t *lookup_opcode(uint32_t inst)
@@ -514,6 +508,14 @@ static int exec_one_inst(GPGPUState *s, GPGPUWarp *warp, uint32_t inst)
 
     for (int lane = 0; lane < GPGPU_WARP_SIZE; lane++) {
         if (warp->active_mask & (1 << lane)) {
+            // 更新 s->simt 中的线程 ID 和 block ID
+            s->simt.thread_id[0] = warp->thread_id_base + lane;
+            s->simt.thread_id[1] = 0;
+            s->simt.thread_id[2] = 0;
+            s->simt.block_id[0] = warp->block_id[0];
+            s->simt.block_id[1] = warp->block_id[1];
+            s->simt.block_id[2] = warp->block_id[2];
+            
             entry->exec(&ctx, lane);
             warp->lanes[lane].gpr[0].u32 = 0;
             
@@ -569,6 +571,7 @@ void gpgpu_core_init_warp(GPGPUWarp *warp, uint32_t pc,
 int gpgpu_core_exec_warp(GPGPUState *s, GPGPUWarp *warp, uint32_t max_cycles)
 {
     uint32_t cycles = 0;
+    uint32_t last_pc = 0;
     
     while (cycles < max_cycles) {
         // 检查 active_mask 是否为 0
@@ -580,6 +583,13 @@ int gpgpu_core_exec_warp(GPGPUState *s, GPGPUWarp *warp, uint32_t max_cycles)
         if (pc >= s->vram_size) {
             return -1;
         }
+        
+        // 检测无限循环（如果 PC 没有变化）
+        if (cycles > 0 && pc == last_pc) {
+            // 假设已经执行完所有有用的指令，进入了无限循环等待
+            return 0;
+        }
+        last_pc = pc;
         
         uint32_t inst = *(uint32_t *)(s->vram_ptr + pc);
         int ret = exec_one_inst(s, warp, inst);
