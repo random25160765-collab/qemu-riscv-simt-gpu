@@ -1,6 +1,7 @@
 #ifndef INST_H
 #define INST_H
 
+#include "gpgpu_core.h"
 #include "qemu/osdep.h"
 #include "debug.h"   // 引入调试宏系统
 
@@ -94,7 +95,8 @@ static inline uint32_t pattern_to_match(const char *pattern) {
     uint32_t src1 = G(rs1); \
     uint32_t src2 = G(rs2); \
     int32_t imm = ctx->imm; \
-    (void)src1; (void)src2; (void)imm;
+    int32_t rd = ctx->rd; \
+    (void)src1; (void)src2; (void)imm; (void)rd;
 
 /* context for float inst */
 #define INIT_LANE_CONTEXT_FP() \
@@ -104,7 +106,8 @@ static inline uint32_t pattern_to_match(const char *pattern) {
     float32 src2 = F(rs2); \
     float32 src3 = F(rs3); \
     int32_t imm = ctx->imm; \
-    (void)src1; (void)src2; (void)src3; (void)imm;
+    int32_t rd = ctx->rd; \
+    (void)src1; (void)src2; (void)src3; (void)imm; (void)rd;
 
 /* minimum context for special inst */
 #define INIT_LANE_CONTEXT_NO() \

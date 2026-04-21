@@ -119,7 +119,7 @@ int main(int argc, char *argv[])
 
     // ========== 2. 加载 Kernel 二进制 ==========
     printf("Loading kernel binary...\n");
-    kernel_bin = read_file("vector_add.bin", &kernel_size);
+    kernel_bin = read_file("bin/kernels/vector_add.bin", &kernel_size);
     if (!kernel_bin) {
         fprintf(stderr, "Failed to load vector_add.bin\n");
         ret = 1;

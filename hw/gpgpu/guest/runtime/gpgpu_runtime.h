@@ -1,0 +1,142 @@
+#ifndef GPGPU_RUNTIME_H
+#define GPGPU_RUNTIME_H
+
+#include <stdint.h>
+#include <stddef.h>
+
+/* ============================================================
+ * 类型定义
+ * ============================================================ */
+
+typedef void* GPGPUDevice;           // 设备句柄
+typedef void* GPGPUKernel;           // Kernel 句柄
+typedef void* GPGPUStream;           // 流句柄（预留）
+
+typedef enum {
+    GPGPU_SUCCESS = 0,
+    GPGPU_ERROR_INVALID_DEVICE,
+    GPGPU_ERROR_INVALID_VALUE,
+    GPGPU_ERROR_LAUNCH_FAILED,
+    GPGPU_ERROR_TIMEOUT,
+    GPGPU_ERROR_OUT_OF_MEMORY,
+} GPGPUError;
+
+typedef enum {
+    GPGPU_MEMCPY_HOST_TO_DEVICE = 0,
+    GPGPU_MEMCPY_DEVICE_TO_HOST,
+    GPGPU_MEMCPY_DEVICE_TO_DEVICE,
+} GPGPUMemcpyKind;
+
+/* ============================================================
+ * 设备管理
+ * ============================================================ */
+
+GPGPUError gpgpuInit(GPGPUDevice *dev);
+GPGPUError gpgpuReset(GPGPUDevice dev);
+GPGPUError gpgpuClose(GPGPUDevice dev);
+GPGPUError gpgpuSynchronize(GPGPUDevice dev);
+
+/* ============================================================
+ * 内存管理
+ * ============================================================ */
+
+GPGPUError gpgpuMalloc(GPGPUDevice dev, void **ptr, size_t size);
+GPGPUError gpgpuFree(GPGPUDevice dev, void *ptr);
+GPGPUError gpgpuMemcpy(GPGPUDevice dev, void *dst, const void *src, 
+                       size_t size, GPGPUMemcpyKind kind);
+GPGPUError gpgpuMemset(GPGPUDevice dev, void *ptr, int value, size_t size);
+
+/* ============================================================
+ * Kernel 管理
+ * ============================================================ */
+
+GPGPUError gpgpuKernelLoad(GPGPUDevice dev, GPGPUKernel *kernel, 
+                           const char *path);
+GPGPUError gpgpuKernelLoadFromMemory(GPGPUDevice dev, GPGPUKernel *kernel,
+                                     const void *data, size_t size);
+
+/* ============================================================
+ * Kernel 启动
+ * ============================================================ */
+
+typedef struct {
+    uint32_t grid_dim[3];
+    uint32_t block_dim[3];
+    uint32_t shared_mem;
+} GPGPULaunchConfig;
+
+GPGPUError gpgpuLaunchKernel(GPGPUDevice dev, GPGPUKernel kernel,
+                             uint32_t grid_x, uint32_t grid_y, uint32_t grid_z,
+                             uint32_t block_x, uint32_t block_y, uint32_t block_z,
+                             uint32_t shared_mem);
+
+/* ============================================================
+ * 便捷宏
+ * ============================================================ */
+
+#define GPGPU_KERNEL_LAUNCH(dev, kernel, grid, block, ...) \
+    do { \
+        gpgpuLaunchKernel(dev, kernel, grid, 1, 1, block, 1, 1, 0); \
+    } while(0)
+
+/* ============================================================
+ * 预定义算子
+ * ============================================================ */
+
+typedef struct {
+    GPGPUKernel relu;
+    GPGPUKernel maxpool;
+    GPGPUKernel conv2d;
+    GPGPUKernel conv2d_multi;
+    GPGPUKernel matmul;
+    GPGPUKernel softmax;
+    GPGPUKernel vecadd;
+} GPGPUOperators;
+
+GPGPUError gpgpuLoadOperators(GPGPUDevice dev, GPGPUOperators *ops);
+
+/* ============================================================
+ * 高层算子 API
+ * ============================================================ */
+
+// ReLU: y = max(0, x)  (原地)
+GPGPUError gpgpuReLU(GPGPUDevice dev, GPGPUKernel kernel, 
+                     void *x, uint32_t n);
+
+// MaxPool 2x2: out = maxpool(in)
+GPGPUError gpgpuMaxPool2x2(GPGPUDevice dev, GPGPUKernel kernel,
+                           const void *in, void *out,
+                           uint32_t h, uint32_t w);
+
+// Conv2D 单通道: out = conv(in, weight)
+GPGPUError gpgpuConv2D(GPGPUDevice dev, GPGPUKernel kernel,
+                       const void *in, const void *weight, void *out,
+                       uint32_t h, uint32_t w, uint32_t k);
+
+// Conv2D 多通道: out[c_out x out_h x out_w] = sum_over_c_in(conv(in[c_in], weight[c_out][c_in]))
+// kernel 传入 ops->conv2d (单通道 kernel)，内部逐通道调用 GPU 并在 CPU 侧累加
+GPGPUError gpgpuConv2DMulti(GPGPUDevice dev, GPGPUKernel conv2d_kernel,
+                             const void *in, const void *weight, void *out,
+                             uint32_t h, uint32_t w, uint32_t k,
+                             uint32_t c_in, uint32_t c_out);
+
+// MatMul: C = A * B
+GPGPUError gpgpuMatMul(GPGPUDevice dev, GPGPUKernel kernel,
+                       const void *a, const void *b, void *c,
+                       uint32_t m, uint32_t n, uint32_t k);
+
+// Softmax (GPU 计算 exp, CPU 归一化)
+GPGPUError gpgpuSoftmax(GPGPUDevice dev, GPGPUKernel kernel,
+                        const void *in, void *out, uint32_t n);
+
+// VectorAdd: C = A + B
+GPGPUError gpgpuVecAdd(GPGPUDevice dev, GPGPUKernel kernel,
+                       const void *a, const void *b, void *c, uint32_t n);
+
+/* ============================================================
+ * 工具函数
+ * ============================================================ */
+
+const char* gpgpuGetErrorString(GPGPUError error);
+
+#endif /* GPGPU_RUNTIME_H */

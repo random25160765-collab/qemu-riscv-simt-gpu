@@ -103,67 +103,219 @@ static void csr_write(GPGPULane *l, uint16_t csr_addr, uint32_t val) {
 /* ======== RV32I ======== */
 
 /* 1. control and branch inst */
-EXEC_FUNC_IN(jal,      { G(rd) = l->pc + 4; l->pc += imm - 4; })
-EXEC_FUNC_IN(jalr,     { G(rd) = l->pc + 4; l->pc = (src1 + imm) & ~1; })
-EXEC_FUNC_IN(beq,      { if (src1 == src2) l->pc += imm - 4; })
-EXEC_FUNC_IN(bne,      { if (src1 != src2) l->pc += imm - 4; })
-EXEC_FUNC_IN(blt,      { if ((int32_t)src1 < (int32_t)src2) l->pc += imm - 4; })
-EXEC_FUNC_IN(bge,      { if ((int32_t)src1 >= (int32_t)src2) l->pc += imm - 4; })
-EXEC_FUNC_IN(bltu,     { if (src1 < src2) l->pc += imm - 4; })
-EXEC_FUNC_IN(bgeu,     { if (src1 >= src2) l->pc += imm - 4; })
+EXEC_FUNC_IN(jal,      { 
+		qemu_log("\t\t[JAL] rd=%d, imm=0x%x, pc=0x%x -> 0x%x\n", rd, imm, l->pc, l->pc + imm - 4); 
+		G(rd) = l->pc + 4; l->pc += imm; 
+})
+EXEC_FUNC_IN(jalr,     { 
+		qemu_log("\t\t[JALR] rd=%d, src1=0x%x, imm=0x%x, pc=0x%x -> 0x%x\n", rd, src1, imm, l->pc, (src1 + imm) & ~1); 
+		G(rd) = l->pc + 4; l->pc = (src1 + imm) & ~1; 
+})
+EXEC_FUNC_IN(beq,      { 
+		qemu_log("\t\t[BEQ] src1=0x%x, src2=0x%x, imm=0x%x, pc=0x%x, taken=%d\n", src1, src2, imm, l->pc, src1 == src2); 
+		if (src1 == src2) l->pc += imm; 
+})
+EXEC_FUNC_IN(bne,      { 
+		qemu_log("\t\t[BNE] src1=0x%x, src2=0x%x, imm=0x%x, pc=0x%x, taken=%d\n", src1, src2, imm, l->pc, src1 != src2); 
+		if (src1 != src2) l->pc += imm; 
+})
+EXEC_FUNC_IN(blt,      { 
+		qemu_log("\t\t[BLT] src1=0x%x, src2=0x%x, imm=0x%x, pc=0x%x, taken=%d\n", src1, src2, imm, l->pc, (int32_t)src1 < (int32_t)src2); 
+		if ((int32_t)src1 < (int32_t)src2) l->pc += imm; 
+})
+EXEC_FUNC_IN(bge,      { 
+		qemu_log("\t\t[BGE] src1=0x%x, src2=0x%x, imm=0x%x, pc=0x%x, taken=%d\n", src1, src2, imm, l->pc, (int32_t)src1 >= (int32_t)src2); 
+		if ((int32_t)src1 >= (int32_t)src2) l->pc += imm; 
+})
+EXEC_FUNC_IN(bltu,     { 
+		qemu_log("\t\t[BLTU] src1=0x%x, src2=0x%x, imm=0x%x, pc=0x%x, taken=%d\n", src1, src2, imm, l->pc, src1 < src2); 
+		if (src1 < src2) l->pc += imm; 
+})
+EXEC_FUNC_IN(bgeu,     { 
+		qemu_log("\t\t[BGEU] src1=0x%x, src2=0x%x, imm=0x%x, pc=0x%x, taken=%d\n", src1, src2, imm, l->pc, src1 >= src2); 
+		if (src1 >= src2) l->pc += imm; 
+})
 
 /* 2. memory IO inst */
-EXEC_FUNC_IN(lb,       { G_I32(rd) = (int32_t)(Mr(src1 + imm, 1) << 24) >> 24; })
-EXEC_FUNC_IN(lh,       { G_I32(rd) = (int32_t)(Mr(src1 + imm, 2) << 16) >> 16; })
-EXEC_FUNC_IN(lw,       { G(rd) = Mr(src1 + imm, 4); })
-EXEC_FUNC_IN(lbu,      { G(rd) = Mr(src1 + imm, 1); })
-EXEC_FUNC_IN(lhu,      { G(rd) = Mr(src1 + imm, 2); })
-EXEC_FUNC_IN(sb,       { Mw(src1 + imm, 1, src2); })
-EXEC_FUNC_IN(sh,       { Mw(src1 + imm, 2, src2); })
-EXEC_FUNC_IN(sw,       { Mw(src1 + imm, 4, src2); })
+EXEC_FUNC_IN(lb,       { 
+		uint32_t addr = src1 + imm;
+		uint8_t val = Mr(addr, 1);
+		qemu_log("\t\t[LB] rd=%d, addr=0x%x, val=0x%02x, sign-extended=0x%x\n", rd, addr, val, (int32_t)(val << 24) >> 24); 
+		G_I32(rd) = (int32_t)(val << 24) >> 24; 
+})
+EXEC_FUNC_IN(lh,       { 
+		uint32_t addr = src1 + imm;
+		uint16_t val = Mr(addr, 2);
+		qemu_log("\t\t[LH] rd=%d, addr=0x%x, val=0x%04x, sign-extended=0x%x\n", rd, addr, val, (int32_t)(val << 16) >> 16); 
+		G_I32(rd) = (int32_t)(val << 16) >> 16; 
+})
+EXEC_FUNC_IN(lw,       { 
+		uint32_t addr = src1 + imm;
+		uint32_t val = Mr(addr, 4);
+		qemu_log("\t\t[LW] rd=%d, addr=0x%x, val=0x%08x\n", rd, addr, val); 
+		G(rd) = val; 
+})
+EXEC_FUNC_IN(lbu,      { 
+		uint32_t addr = src1 + imm;
+		uint8_t val = Mr(addr, 1);
+		qemu_log("\t\t[LBU] rd=%d, addr=0x%x, val=0x%02x\n", rd, addr, val); 
+		G(rd) = val; 
+})
+EXEC_FUNC_IN(lhu,      { 
+		uint32_t addr = src1 + imm;
+		uint16_t val = Mr(addr, 2);
+		qemu_log("\t\t[LHU] rd=%d, addr=0x%x, val=0x%04x\n", rd, addr, val); 
+		G(rd) = val; 
+})
+EXEC_FUNC_IN(sb,       { 
+		uint32_t addr = src1 + imm;
+		qemu_log("\t\t[SB] addr=0x%x, val=0x%02x\n", addr, src2 & 0xFF); 
+		Mw(addr, 1, src2); 
+})
+EXEC_FUNC_IN(sh,       { 
+		uint32_t addr = src1 + imm;
+		qemu_log("\t\t[SH] addr=0x%x, val=0x%04x\n", addr, src2 & 0xFFFF); 
+		Mw(addr, 2, src2); 
+})
+EXEC_FUNC_IN(sw,       { 
+		uint32_t addr = src1 + imm;
+		qemu_log("\t\t[SW] addr=0x%x, val=0x%08x\n", addr, src2); 
+		Mw(addr, 4, src2); 
+})
 
 /* 3. unary integer operator */
-EXEC_FUNC_IN(lui,      { G(rd) = imm; })
-EXEC_FUNC_IN(auipc,    { G(rd) = l->pc + imm; })
-EXEC_FUNC_IN(addi,     { G(rd) = src1 + imm; })
-EXEC_FUNC_IN(slti,     { G(rd) = ((int32_t)src1 < imm) ? 1 : 0; })
-EXEC_FUNC_IN(sltiu,    { G(rd) = (src1 < (uint32_t)imm) ? 1 : 0; })
-EXEC_FUNC_IN(xori,     { G(rd) = src1 ^ imm; })
-EXEC_FUNC_IN(ori,      { G(rd) = src1 | imm; })
-EXEC_FUNC_IN(andi,     { G(rd) = src1 & imm; })
-EXEC_FUNC_IN(slli,     { G(rd) = src1 << (imm & 0x1F); })
-EXEC_FUNC_IN(srli,     { G(rd) = src1 >> (imm & 0x1F); })
-EXEC_FUNC_IN(srai,     { G_I32(rd) = (int32_t)src1 >> (imm & 0x1F); })
+EXEC_FUNC_IN(lui,      { 
+		qemu_log("\t\t[LUI] rd=%d, imm=0x%x, result=0x%x\n", rd, imm, imm); 
+		G(rd) = imm; 
+})
+EXEC_FUNC_IN(auipc,    { 
+		qemu_log("\t\t[AUIPC] rd=%d, imm=0x%x, pc=0x%x, result=0x%x\n", rd, imm, l->pc, l->pc + imm); 
+		G(rd) = l->pc + imm; 
+})
+EXEC_FUNC_IN(addi,     { 
+		qemu_log("\t\t[ADDI] rd=%d, src1=0x%x, imm=0x%x, result=0x%x\n", rd, src1, imm, src1 + imm); 
+		G(rd) = src1 + imm; 
+})
+EXEC_FUNC_IN(slti,     { 
+		qemu_log("\t\t[SLTI] rd=%d, src1=0x%x, imm=0x%x, result=%d\n", rd, src1, imm, ((int32_t)src1 < imm) ? 1 : 0); 
+		G(rd) = ((int32_t)src1 < imm) ? 1 : 0; 
+})
+EXEC_FUNC_IN(sltiu,    { 
+		qemu_log("\t\t[SLTIU] rd=%d, src1=0x%x, imm=0x%x, result=%d\n", rd, src1, imm, (src1 < (uint32_t)imm) ? 1 : 0); 
+		G(rd) = (src1 < (uint32_t)imm) ? 1 : 0; 
+})
+EXEC_FUNC_IN(xori,     { 
+		qemu_log("\t\t[XORI] rd=%d, src1=0x%x, imm=0x%x, result=0x%x\n", rd, src1, imm, src1 ^ imm); 
+		G(rd) = src1 ^ imm; 
+})
+EXEC_FUNC_IN(ori,      { 
+		qemu_log("\t\t[ORI] rd=%d, src1=0x%x, imm=0x%x, result=0x%x\n", rd, src1, imm, src1 | imm); 
+		G(rd) = src1 | imm; 
+})
+EXEC_FUNC_IN(andi,     { 
+		qemu_log("\t\t[ANDI] rd=%d, src1=0x%x, imm=0x%x, result=0x%x\n", rd, src1, imm, src1 & imm); 
+		G(rd) = src1 & imm; 
+})
+EXEC_FUNC_IN(slli,     { 
+		qemu_log("\t\t[SLLI] rd=%d, src1=0x%x, shamt=%d, result=0x%x\n", rd, src1, imm & 0x1F, src1 << (imm & 0x1F)); 
+		G(rd) = src1 << (imm & 0x1F); 
+})
+EXEC_FUNC_IN(srli,     { 
+		qemu_log("\t\t[SRLI] rd=%d, src1=0x%x, shamt=%d, result=0x%x\n", rd, src1, imm & 0x1F, src1 >> (imm & 0x1F)); 
+		G(rd) = src1 >> (imm & 0x1F); 
+})
+EXEC_FUNC_IN(srai,     { 
+		qemu_log("\t\t[SRAI] rd=%d, src1=0x%x, shamt=%d, result=0x%x\n", rd, src1, imm & 0x1F, (int32_t)src1 >> (imm & 0x1F)); 
+		G_I32(rd) = (int32_t)src1 >> (imm & 0x1F); 
+})
 
 /* 4. binary integer operator */
-EXEC_FUNC_IN(add,      { G(rd) = src1 + src2; })
-EXEC_FUNC_IN(sub,      { G(rd) = src1 - src2; })
-EXEC_FUNC_IN(sll,      { G(rd) = src1 << (src2 & 0x1F); })
-EXEC_FUNC_IN(slt,      { G(rd) = ((int32_t)src1 < (int32_t)src2) ? 1 : 0; })
-EXEC_FUNC_IN(sltu,     { G(rd) = (src1 < src2) ? 1 : 0; })
-EXEC_FUNC_IN(xor,      { G(rd) = src1 ^ src2; })
-EXEC_FUNC_IN(srl,      { G(rd) = src1 >> (src2 & 0x1F); })
-EXEC_FUNC_IN(sra,      { G_I32(rd) = (int32_t)src1 >> (src2 & 0x1F); })
-EXEC_FUNC_IN(or,       { G(rd) = src1 | src2; })
-EXEC_FUNC_IN(and,      { G(rd) = src1 & src2; })
+EXEC_FUNC_IN(add,      { 
+		qemu_log("\t\t[ADD] rd=%d, src1=0x%x, src2=0x%x, result=0x%x\n", rd, src1, src2, src1 + src2); 
+		G(rd) = src1 + src2; 
+})
+EXEC_FUNC_IN(sub,      { 
+		qemu_log("\t\t[SUB] rd=%d, src1=0x%x, src2=0x%x, result=0x%x\n", rd, src1, src2, src1 - src2); 
+		G(rd) = src1 - src2; 
+})
+EXEC_FUNC_IN(sll,      { 
+		qemu_log("\t\t[SLL] rd=%d, src1=0x%x, shamt=%d, result=0x%x\n", rd, src1, src2 & 0x1F, src1 << (src2 & 0x1F)); 
+		G(rd) = src1 << (src2 & 0x1F); 
+})
+EXEC_FUNC_IN(slt,      { 
+		qemu_log("\t\t[SLT] rd=%d, src1=0x%x, src2=0x%x, result=%d\n", rd, src1, src2, ((int32_t)src1 < (int32_t)src2) ? 1 : 0); 
+		G(rd) = ((int32_t)src1 < (int32_t)src2) ? 1 : 0; 
+})
+EXEC_FUNC_IN(sltu,     { 
+		qemu_log("\t\t[SLTU] rd=%d, src1=0x%x, src2=0x%x, result=%d\n", rd, src1, src2, (src1 < src2) ? 1 : 0); 
+		G(rd) = (src1 < src2) ? 1 : 0; 
+})
+EXEC_FUNC_IN(xor,      { 
+		qemu_log("\t\t[XOR] rd=%d, src1=0x%x, src2=0x%x, result=0x%x\n", rd, src1, src2, src1 ^ src2); 
+		G(rd) = src1 ^ src2; 
+})
+EXEC_FUNC_IN(srl,      { 
+		qemu_log("\t\t[SRL] rd=%d, src1=0x%x, shamt=%d, result=0x%x\n", rd, src1, src2 & 0x1F, src1 >> (src2 & 0x1F)); 
+		G(rd) = src1 >> (src2 & 0x1F); 
+})
+EXEC_FUNC_IN(sra,      { 
+		qemu_log("\t\t[SRA] rd=%d, src1=0x%x, shamt=%d, result=0x%x\n", rd, src1, src2 & 0x1F, (int32_t)src1 >> (src2 & 0x1F)); 
+		G_I32(rd) = (int32_t)src1 >> (src2 & 0x1F); 
+})
+EXEC_FUNC_IN(or,       { 
+		qemu_log("\t\t[OR] rd=%d, src1=0x%x, src2=0x%x, result=0x%x\n", rd, src1, src2, src1 | src2); 
+		G(rd) = src1 | src2; 
+})
+EXEC_FUNC_IN(and,      { 
+		qemu_log("\t\t[AND] rd=%d, src1=0x%x, src2=0x%x, result=0x%x\n", rd, src1, src2, src1 & src2); 
+		G(rd) = src1 & src2; 
+})
 
 /* 5. RV32M mul & div expansion */
-EXEC_FUNC_IN(mul,      { G(rd) = src1 * src2; })
-EXEC_FUNC_IN(mulh,     { G(rd) = (uint32_t)(((int64_t)(int32_t)src1 * (int64_t)(int32_t)src2) >> 32); })
-EXEC_FUNC_IN(mulhsu,   { G(rd) = (uint32_t)(((int64_t)(int32_t)src1 * (uint64_t)src2) >> 32); })
-EXEC_FUNC_IN(mulhu,    { G(rd) = (uint32_t)(((uint64_t)src1 * (uint64_t)src2) >> 32); })
-EXEC_FUNC_IN(div,      { G_I32(rd) = (src2 == 0) ? -1 : (int32_t)src1 / (int32_t)src2; })
-EXEC_FUNC_IN(divu,     { G(rd) = (src2 == 0) ? 0xFFFFFFFF : src1 / src2; })
-EXEC_FUNC_IN(rem,      { G_I32(rd) = (src2 == 0) ? src1 : (int32_t)src1 % (int32_t)src2; })
-EXEC_FUNC_IN(remu,     { G(rd) = (src2 == 0) ? src1 : src1 % src2; })
+EXEC_FUNC_IN(mul,      { 
+		qemu_log("\t\t[MUL] rd=%d, src1=0x%x, src2=0x%x, result=0x%x\n", rd, src1, src2, src1 * src2); 
+		G(rd) = src1 * src2; 
+})
+EXEC_FUNC_IN(mulh,     { 
+		qemu_log("\t\t[MULH] rd=%d, src1=0x%x, src2=0x%x, result=0x%x\n", rd, src1, src2, (uint32_t)(((int64_t)(int32_t)src1 * (int64_t)(int32_t)src2) >> 32)); 
+		G(rd) = (uint32_t)(((int64_t)(int32_t)src1 * (int64_t)(int32_t)src2) >> 32); 
+})
+EXEC_FUNC_IN(mulhsu,   { 
+		qemu_log("\t\t[MULHSU] rd=%d, src1=0x%x, src2=0x%x, result=0x%x\n", rd, src1, src2, (uint32_t)(((int64_t)(int32_t)src1 * (uint64_t)src2) >> 32)); 
+		G(rd) = (uint32_t)(((int64_t)(int32_t)src1 * (uint64_t)src2) >> 32); 
+})
+EXEC_FUNC_IN(mulhu,    { 
+		qemu_log("\t\t[MULHU] rd=%d, src1=0x%x, src2=0x%x, result=0x%x\n", rd, src1, src2, (uint32_t)(((uint64_t)src1 * (uint64_t)src2) >> 32)); 
+		G(rd) = (uint32_t)(((uint64_t)src1 * (uint64_t)src2) >> 32); 
+})
+EXEC_FUNC_IN(div,      { 
+		qemu_log("\t\t[DIV] rd=%d, src1=0x%x, src2=0x%x, result=0x%x\n", rd, src1, src2, (src2 == 0) ? -1 : (int32_t)src1 / (int32_t)src2); 
+		G_I32(rd) = (src2 == 0) ? -1 : (int32_t)src1 / (int32_t)src2; 
+})
+EXEC_FUNC_IN(divu,     { 
+		qemu_log("\t\t[DIVU] rd=%d, src1=0x%x, src2=0x%x, result=0x%x\n", rd, src1, src2, (src2 == 0) ? 0xFFFFFFFF : src1 / src2); 
+		G(rd) = (src2 == 0) ? 0xFFFFFFFF : src1 / src2; 
+})
+EXEC_FUNC_IN(rem,      { 
+		qemu_log("\t\t[REM] rd=%d, src1=0x%x, src2=0x%x, result=0x%x\n", rd, src1, src2, (src2 == 0) ? src1 : (int32_t)src1 % (int32_t)src2); 
+		G_I32(rd) = (src2 == 0) ? src1 : (int32_t)src1 % (int32_t)src2; 
+})
+EXEC_FUNC_IN(remu,     { 
+		qemu_log("\t\t[REMU] rd=%d, src1=0x%x, src2=0x%x, result=0x%x\n", rd, src1, src2, (src2 == 0) ? src1 : src1 % src2); 
+		G(rd) = (src2 == 0) ? src1 : src1 % src2; 
+})
 
 /* 6. system inst */
-EXEC_FUNC_IN(ebreak,   { /* nothing */ })
+EXEC_FUNC_IN(ebreak,   { 
+		qemu_log("\t\t[EBREAK] breakpoint instruction executed\n"); 
+		/* nothing */ 
+})
 
 /* CSRRW: 原子交换 CSR 和整数寄存器 */
 EXEC_FUNC_IN(csrrw, {
     uint16_t csr = (uint16_t)imm;
     uint32_t old_val = csr_read(l, csr);
+    qemu_log("\t\t[CSRRW] rd=%d, csr=0x%x, src1=0x%x, old_val=0x%x, new_val=0x%x\n", rd, csr, src1, old_val, src1);
     G(rd) = old_val;
     csr_write(l, csr, src1);
 })
@@ -172,6 +324,7 @@ EXEC_FUNC_IN(csrrw, {
 EXEC_FUNC_IN(csrrs, {
     uint16_t csr = (uint16_t)imm;
     uint32_t old_val = csr_read(l, csr);
+    qemu_log("\t\t[CSRRS] rd=%d, csr=0x%x, src1=0x%x, old_val=0x%x, new_val=0x%x\n", rd, csr, src1, old_val, old_val | src1);
     G(rd) = old_val;
     if (ctx->rs1 != 0) {  // x0 时只读不写
         csr_write(l, csr, old_val | src1);
@@ -182,6 +335,7 @@ EXEC_FUNC_IN(csrrs, {
 EXEC_FUNC_IN(csrrc, {
     uint16_t csr = (uint16_t)imm;
     uint32_t old_val = csr_read(l, csr);
+    qemu_log("\t\t[CSRRC] rd=%d, csr=0x%x, src1=0x%x, old_val=0x%x, new_val=0x%x\n", rd, csr, src1, old_val, old_val & ~src1);
     G(rd) = old_val;
     if (ctx->rs1 != 0) {
         csr_write(l, csr, old_val & ~src1);
@@ -190,6 +344,7 @@ EXEC_FUNC_IN(csrrc, {
 
 /* CSRRWI: 原子交换 CSR 和立即数 */
 EXEC_FUNC_IN(csrrwi, {
+    qemu_log("\t\t[CSRRWI] rd=%d, csr=0x%x, uimm=%d\n", rd, (uint16_t)imm, ctx->rs1);
     uint16_t csr = (uint16_t)imm;
     uint32_t old_val = csr_read(l, csr);
     G(rd) = old_val;
@@ -198,6 +353,7 @@ EXEC_FUNC_IN(csrrwi, {
 
 /* CSRRSI: 读 CSR 并用立即数置位 */
 EXEC_FUNC_IN(csrrsi, {
+    qemu_log("\t\t[CSRRSI] rd=%d, csr=0x%x, uimm=%d\n", rd, (uint16_t)imm, ctx->rs1);
     uint16_t csr = (uint16_t)imm;
     uint32_t old_val = csr_read(l, csr);
     G(rd) = old_val;
@@ -210,6 +366,7 @@ EXEC_FUNC_IN(csrrsi, {
 EXEC_FUNC_IN(csrrci, {
     uint16_t csr = (uint16_t)imm;
     uint32_t old_val = csr_read(l, csr);
+    qemu_log("\t\t[CSRRCI] rd=%d, csr=0x%x, imm=%d, old_val=0x%x, new_val=0x%x\n", rd, csr, imm, old_val, old_val & ~imm);
     G(rd) = old_val;
     if (ctx->rs1 != 0) {
         csr_write(l, csr, old_val & ~(uint32_t)ctx->rs1);
@@ -218,44 +375,107 @@ EXEC_FUNC_IN(csrrci, {
 
 /* ============ RV32F ============ */
 
-/* 访存指令 */
-EXEC_FUNC_FP(flw, {
-    uint32_t val = Mr(src1 + imm, 4);
+/* 访存指令（特殊实现） */
+static void __attribute__((unused)) exec_flw(exec_ctx_t *ctx, int lane_id) {
+    GPGPULane *l = &ctx->warp->lanes[lane_id];
+    uint32_t old_pc = l->pc;
+    uint32_t addr = G(rs1) + ctx->imm;
+    
+    qemu_log("\t\t[FLW] rd=%d, addr=0x%x\n", ctx->rd, addr);
+    uint32_t val = Mr(addr, 4);
     F(rd) = val;
-})
+    
+    if (l->pc == old_pc) l->pc += 4;
+}
 
-EXEC_FUNC_FP(fsw, {
+static void __attribute__((unused)) exec_fsw(exec_ctx_t *ctx, int lane_id) {
+    GPGPULane *l = &ctx->warp->lanes[lane_id];
+    uint32_t old_pc = l->pc;
+    uint32_t addr = G(rs1) + ctx->imm;
+    
+    qemu_log("\t\t[FSW] addr=0x%x, val=0x%08x\n", addr, F(rs2));
     uint32_t val = F(rs2);
-    Mw(src1 + imm, 4, val);
-})
+    Mw(addr, 4, val);
+    
+    if (l->pc == old_pc) l->pc += 4;
+}
 
 /* 符号注入 */
-EXEC_FUNC_FP(fsgnj_s,  { F(rd) = (F(rs1) & ~0x80000000) | (F(rs2) & 0x80000000); })
-EXEC_FUNC_FP(fsgnjn_s, { F(rd) = (F(rs1) & ~0x80000000) | ((~F(rs2)) & 0x80000000); })
-EXEC_FUNC_FP(fsgnjx_s, { F(rd) = F(rs1) ^ (F(rs2) & 0x80000000); })
+EXEC_FUNC_FP(fsgnj_s,  { 
+    qemu_log("\t\t[FSGNJ_S] rd=%d, rs1=0x%08x, rs2=0x%08x\n", rd, F(rs1), F(rs2));
+    F(rd) = (F(rs1) & ~0x80000000) | (F(rs2) & 0x80000000); 
+})
+EXEC_FUNC_FP(fsgnjn_s, { 
+    qemu_log("\t\t[FSGNJN_S] rd=%d, rs1=0x%08x, rs2=0x%08x\n", rd, F(rs1), F(rs2));
+    F(rd) = (F(rs1) & ~0x80000000) | ((~F(rs2)) & 0x80000000); 
+})
+EXEC_FUNC_FP(fsgnjx_s, { 
+    qemu_log("\t\t[FSGNJX_S] rd=%d, rs1=0x%08x, rs2=0x%08x\n", rd, F(rs1), F(rs2));
+    F(rd) = F(rs1) ^ (F(rs2) & 0x80000000); 
+})
 
 /* 算术运算 */
-EXEC_FUNC_FP(fadd_s,   { F(rd) = float32_add(F(rs1), F(rs2), &l->fp_status); })
-EXEC_FUNC_FP(fsub_s,   { F(rd) = float32_sub(F(rs1), F(rs2), &l->fp_status); })
-EXEC_FUNC_FP(fmul_s,   { F(rd) = float32_mul(F(rs1), F(rs2), &l->fp_status); })
-EXEC_FUNC_FP(fdiv_s,   { F(rd) = float32_div(F(rs1), F(rs2), &l->fp_status); })
-EXEC_FUNC_FP(fsqrt_s,  { F(rd) = float32_sqrt(F(rs1), &l->fp_status); })
+EXEC_FUNC_FP(fadd_s,   { 
+    qemu_log("\t\t[FADD_S] rd=%d, rs1=0x%08x, rs2=0x%08x\n", rd, F(rs1), F(rs2));
+    F(rd) = float32_add(F(rs1), F(rs2), &l->fp_status); 
+})
+EXEC_FUNC_FP(fsub_s,   { 
+    qemu_log("\t\t[FSUB_S] rd=%d, rs1=0x%08x, rs2=0x%08x\n", rd, F(rs1), F(rs2));
+    F(rd) = float32_sub(F(rs1), F(rs2), &l->fp_status); 
+})
+EXEC_FUNC_FP(fmul_s,   { 
+    qemu_log("\t\t[FMUL_S] rd=%d, rs1=0x%08x, rs2=0x%08x\n", rd, F(rs1), F(rs2));
+    F(rd) = float32_mul(F(rs1), F(rs2), &l->fp_status); 
+})
+EXEC_FUNC_FP(fdiv_s,   { 
+    qemu_log("\t\t[FDIV_S] rd=%d, rs1=0x%08x, rs2=0x%08x\n", rd, F(rs1), F(rs2));
+    F(rd) = float32_div(F(rs1), F(rs2), &l->fp_status); 
+})
+EXEC_FUNC_FP(fsqrt_s,  { 
+    qemu_log("\t\t[FSQRT_S] rd=%d, rs1=0x%08x\n", rd, F(rs1));
+    F(rd) = float32_sqrt(F(rs1), &l->fp_status); 
+})
 
 /* 乘加指令 */
-EXEC_FUNC_FP(fmadd_s,  { F(rd) = float32_muladd(F(rs1), F(rs2), F(rs3), 0, &l->fp_status); })
-EXEC_FUNC_FP(fmsub_s,  { F(rd) = float32_muladd(F(rs1), F(rs2), F(rs3), float_muladd_negate_c, &l->fp_status); })
-EXEC_FUNC_FP(fnmsub_s, { F(rd) = float32_muladd(F(rs1), F(rs2), F(rs3), float_muladd_negate_product, &l->fp_status); })
-EXEC_FUNC_FP(fnmadd_s, { F(rd) = float32_muladd(F(rs1), F(rs2), F(rs3), float_muladd_negate_result, &l->fp_status); })
+EXEC_FUNC_FP(fmadd_s,  { 
+    qemu_log("\t\t[FMADD_S] rd=%d, rs1=0x%08x, rs2=0x%08x, rs3=0x%08x\n", rd, F(rs1), F(rs2), F(rs3));
+    F(rd) = float32_muladd(F(rs1), F(rs2), F(rs3), 0, &l->fp_status); 
+})
+EXEC_FUNC_FP(fmsub_s,  { 
+    qemu_log("\t\t[FMSUB_S] rd=%d, rs1=0x%08x, rs2=0x%08x, rs3=0x%08x\n", rd, F(rs1), F(rs2), F(rs3));
+    F(rd) = float32_muladd(F(rs1), F(rs2), F(rs3), float_muladd_negate_c, &l->fp_status); 
+})
+EXEC_FUNC_FP(fnmsub_s, { 
+    qemu_log("\t\t[FNMSUB_S] rd=%d, rs1=0x%08x, rs2=0x%08x, rs3=0x%08x\n", rd, F(rs1), F(rs2), F(rs3));
+    F(rd) = float32_muladd(F(rs1), F(rs2), F(rs3), float_muladd_negate_product, &l->fp_status); 
+})
+EXEC_FUNC_FP(fnmadd_s, { 
+    qemu_log("\t\t[FNMADD_S] rd=%d, rs1=0x%08x, rs2=0x%08x, rs3=0x%08x\n", rd, F(rs1), F(rs2), F(rs3));
+    F(rd) = float32_muladd(F(rs1), F(rs2), F(rs3), float_muladd_negate_result, &l->fp_status); 
+})
 
 /* 最值 */
-EXEC_FUNC_FP(fmin_s,   { F(rd) = float32_min(F(rs1), F(rs2), &l->fp_status); })
-EXEC_FUNC_FP(fmax_s,   { F(rd) = float32_max(F(rs1), F(rs2), &l->fp_status); })
+EXEC_FUNC_FP(fmin_s,   { 
+    qemu_log("\t\t[FMIN_S] rd=%d, rs1=0x%08x, rs2=0x%08x\n", rd, F(rs1), F(rs2));
+    F(rd) = float32_min(F(rs1), F(rs2), &l->fp_status); 
+})
+EXEC_FUNC_FP(fmax_s,   { 
+    qemu_log("\t\t[FMAX_S] rd=%d, rs1=0x%08x, rs2=0x%08x\n", rd, F(rs1), F(rs2));
+    F(rd) = float32_max(F(rs1), F(rs2), &l->fp_status); 
+})
 
 /* 转换指令 */
-EXEC_FUNC_FP(fcvt_s_w,   { F(rd) = int32_to_float32(G_I32(rs1), &l->fp_status); })
-EXEC_FUNC_FP(fcvt_s_wu,  { F(rd) = uint32_to_float32(G(rs1), &l->fp_status); })
+EXEC_FUNC_FP(fcvt_s_w,   { 
+    qemu_log("\t\t[FCVT_S_W] rd=%d, rs1=0x%08x\n", rd, G_I32(rs1));
+    F(rd) = int32_to_float32(G_I32(rs1), &l->fp_status); 
+})
+EXEC_FUNC_FP(fcvt_s_wu,  { 
+    qemu_log("\t\t[FCVT_S_WU] rd=%d, rs1=0x%08x\n", rd, G(rs1));
+    F(rd) = uint32_to_float32(G(rs1), &l->fp_status); 
+})
 
 EXEC_FUNC_FP(fcvt_w_s, {
+    qemu_log("\t\t[FCVT_W_S] rd=%d, rs1=0x%08x\n", rd, F(rs1));
     float32 f = F(rs1);
     if (float32_is_quiet_nan(f, &l->fp_status) || float32_is_signaling_nan(f, &l->fp_status)) {
         G_I32(rd) = 0x7FFFFFFF;
@@ -274,6 +494,7 @@ EXEC_FUNC_FP(fcvt_w_s, {
 })
 
 EXEC_FUNC_FP(fcvt_wu_s, {
+    qemu_log("\t\t[FCVT_WU_S] rd=%d, rs1=0x%08x\n", rd, F(rs1));
     float32 f = F(rs1);
     if (float32_is_quiet_nan(f, &l->fp_status) || float32_is_signaling_nan(f, &l->fp_status)) {
         G(rd) = 0xFFFFFFFF;
@@ -290,16 +511,32 @@ EXEC_FUNC_FP(fcvt_wu_s, {
 })
 
 /* 比较 */
-EXEC_FUNC_FP(feq_s,   { G(rd) = float32_eq(F(rs1), F(rs2), &l->fp_status); })
-EXEC_FUNC_FP(flt_s,   { G(rd) = float32_lt(F(rs1), F(rs2), &l->fp_status); })
-EXEC_FUNC_FP(fle_s,   { G(rd) = float32_le(F(rs1), F(rs2), &l->fp_status); })
+EXEC_FUNC_FP(feq_s,   { 
+    qemu_log("\t\t[FEQ_S] rd=%d, rs1=0x%08x, rs2=0x%08x\n", rd, F(rs1), F(rs2));
+    G(rd) = float32_eq(F(rs1), F(rs2), &l->fp_status); 
+})
+EXEC_FUNC_FP(flt_s,   { 
+    qemu_log("\t\t[FLT_S] rd=%d, rs1=0x%08x, rs2=0x%08x\n", rd, F(rs1), F(rs2));
+    G(rd) = float32_lt(F(rs1), F(rs2), &l->fp_status); 
+})
+EXEC_FUNC_FP(fle_s,   { 
+    qemu_log("\t\t[FLE_S] rd=%d, rs1=0x%08x, rs2=0x%08x\n", rd, F(rs1), F(rs2));
+    G(rd) = float32_le(F(rs1), F(rs2), &l->fp_status); 
+})
 
 /* 数据移动 */
-EXEC_FUNC_FP(fmv_w_x,  { F(rd) = G(rs1); })
-EXEC_FUNC_FP(fmv_x_w,  { G(rd) = F(rs1); })
+EXEC_FUNC_FP(fmv_w_x,  { 
+    qemu_log("\t\t[FMV_W_X] rd=%d, rs1=0x%08x\n", rd, G(rs1));
+    F(rd) = G(rs1); 
+})
+EXEC_FUNC_FP(fmv_x_w,  { 
+    qemu_log("\t\t[FMV_X_W] rd=%d, rs1=0x%08x\n", rd, F(rs1));
+    G(rd) = F(rs1); 
+})
 
 /* 分类 */
 EXEC_FUNC_FP(fclass_s, { 
+    qemu_log("\t\t[FCLASS_S] rd=%d, rs1=0x%08x\n", rd, F(rs1));
     uint32_t bits = F(rs1);
     uint32_t exp = (bits >> 23) & 0xFF;
     uint32_t mant = bits & 0x7FFFFF;
@@ -500,12 +737,6 @@ static int exec_one_inst(GPGPUState *s, GPGPUWarp *warp, uint32_t inst)
 
     get_warp_ctx(&ctx, inst, entry->type);
     
-    if (entry->match == MATCH_EBREAK) {
-        // ebreak 指令：清零所有活跃 Lane 的 active_mask 位
-        warp->active_mask = 0;
-        return 1;
-    }
-
     for (int lane = 0; lane < GPGPU_WARP_SIZE; lane++) {
         if (warp->active_mask & (1 << lane)) {
             // 更新 s->simt 中的线程 ID 和 block ID
@@ -515,6 +746,13 @@ static int exec_one_inst(GPGPUState *s, GPGPUWarp *warp, uint32_t inst)
             s->simt.block_id[0] = warp->block_id[0];
             s->simt.block_id[1] = warp->block_id[1];
             s->simt.block_id[2] = warp->block_id[2];
+            
+            // 检查是否是 ebreak 指令
+            if (entry->match == MATCH_EBREAK) {
+                // ebreak 指令：只清零当前 Lane 的 active_mask 位
+                warp->active_mask &= ~(1 << lane);
+                continue;
+            }
             
             entry->exec(&ctx, lane);
             warp->lanes[lane].gpr[0].u32 = 0;
@@ -548,10 +786,10 @@ void gpgpu_core_init_warp(GPGPUWarp *warp, uint32_t pc,
     warp->block_id[2] = block_id[2];
     
     /* Set active mask */
-    if (num_threads > GPGPU_WARP_SIZE) {
+    if (num_threads >= GPGPU_WARP_SIZE) {
         warp->active_mask = 0xFFFFFFFF;
     } else {
-        warp->active_mask = (1 << num_threads) - 1;
+        warp->active_mask = (1U << num_threads) - 1;
     }
     
     /* Initialize each lane */
@@ -570,46 +808,73 @@ void gpgpu_core_init_warp(GPGPUWarp *warp, uint32_t pc,
 /* warp execution */
 int gpgpu_core_exec_warp(GPGPUState *s, GPGPUWarp *warp, uint32_t max_cycles)
 {
+    // 计算活跃线程数量
+    int num_threads = 0;
+    for (int i = 0; i < GPGPU_WARP_SIZE; i++) {
+        if (warp->active_mask & (1 << i)) {
+            num_threads++;
+        }
+    }
+    
+    qemu_log("\t[KERNEL]: Starting warp execution, max_cycles=%u, active_mask=0x%x, num_threads=%d\n", 
+             max_cycles, warp->active_mask, num_threads);
     uint32_t cycles = 0;
     uint32_t last_pc = 0;
     
     while (cycles < max_cycles) {
         // 检查 active_mask 是否为 0
         if (warp->active_mask == 0) {
+            qemu_log("\t[KERNEL]: Warp execution completed - all threads inactive\n");
             return 0;
         }
 
         uint32_t pc = warp->lanes[0].pc;
         if (pc >= s->vram_size) {
+            qemu_log("\t[KERNEL]: ERROR - PC (0x%x) out of VRAM bounds (0x%lx)\n", pc, s->vram_size);
             return -1;
         }
         
         // 检测无限循环（如果 PC 没有变化）
         if (cycles > 0 && pc == last_pc) {
+            qemu_log("\t[KERNEL]: Warp execution completed - detected infinite loop at PC 0x%x\n", pc);
             // 假设已经执行完所有有用的指令，进入了无限循环等待
             return 0;
         }
         last_pc = pc;
         
         uint32_t inst = *(uint32_t *)(s->vram_ptr + pc);
+        qemu_log("\t[KERNEL]: Fetching instruction at PC 0x%x: 0x%08x\n", pc, inst);
         int ret = exec_one_inst(s, warp, inst);
         
         if (ret == 1) {
+            qemu_log("\t[KERNEL]: Warp execution completed - instruction returned 1\n");
             return 0;
         } else if (ret == -1) {
+            qemu_log("\t[KERNEL]: ERROR - Instruction execution failed\n");
             return -1;
         }
 
         cycles++;
+        if (cycles % 1000 == 0) {
+            qemu_log("\t[KERNEL]: Warp execution progress: %u/%u cycles\n", cycles, max_cycles);
+        }
     }
     
     // 超出最大周期限制，设置 KERNEL_FAULT 错误状态
+    qemu_log("\t[KERNEL]: ERROR - Warp execution timeout after %u cycles\n", max_cycles);
     s->error_status |= GPGPU_ERR_KERNEL_FAULT;
     return -1;
 }
 
 int gpgpu_core_exec_kernel(GPGPUState *s)
 {
+    qemu_log("\t[KERNEL]: Starting kernel execution\n");
+    qemu_log("\t[KERNEL]: Kernel address: 0x%lx\n", s->kernel.kernel_addr);
+    qemu_log("\t[KERNEL]: Grid dimensions: (%u, %u, %u)\n", 
+             s->kernel.grid_dim[0], s->kernel.grid_dim[1], s->kernel.grid_dim[2]);
+    qemu_log("\t[KERNEL]: Block dimensions: (%u, %u, %u)\n", 
+             s->kernel.block_dim[0], s->kernel.block_dim[1], s->kernel.block_dim[2]);
+    
     uint32_t grid_dim[3] = {
         s->kernel.grid_dim[0],
         s->kernel.grid_dim[1],
@@ -623,14 +888,21 @@ int gpgpu_core_exec_kernel(GPGPUState *s)
     
     uint32_t kernel_addr = s->kernel.kernel_addr;
     uint32_t threads_per_block = block_dim[0] * block_dim[1] * block_dim[2];
+    qemu_log("\t[KERNEL]: Threads per block: %u\n", threads_per_block);
+    
+    qemu_log("\t[KERNEL]: Total blocks: %u\n", grid_dim[0] * grid_dim[1] * grid_dim[2]);
     
     for (uint32_t z = 0; z < grid_dim[2]; z++) {
         for (uint32_t y = 0; y < grid_dim[1]; y++) {
             for (uint32_t x = 0; x < grid_dim[0]; x++) {
                 uint32_t block_id[3] = {x, y, z};
                 uint32_t block_id_linear = z * grid_dim[0] * grid_dim[1] + y * grid_dim[0] + x;
+                qemu_log("\t[KERNEL]: Executing block (%u, %u, %u), linear_id=%u\n", 
+                         x, y, z, block_id_linear);
                 
                 uint32_t num_warps = (threads_per_block + GPGPU_WARP_SIZE - 1) / GPGPU_WARP_SIZE;
+                qemu_log("\t[KERNEL]: Warps per block: %u\n", num_warps);
+                
                 for (uint32_t warp_id = 0; warp_id < num_warps; warp_id++) {
                     GPGPUWarp warp;
                     uint32_t thread_id_base = warp_id * GPGPU_WARP_SIZE;
@@ -638,16 +910,26 @@ int gpgpu_core_exec_kernel(GPGPUState *s)
                     if (num_threads > GPGPU_WARP_SIZE) {
                         num_threads = GPGPU_WARP_SIZE;
                     }
+                    qemu_log("\t[KERNEL]: Initializing warp %u, threads=%u, base=%u\n", 
+                             warp_id, num_threads, thread_id_base);
+                    
                     gpgpu_core_init_warp(&warp, kernel_addr, thread_id_base, 
                                         block_id, num_threads, 
                                         warp_id, block_id_linear);
+                    
+                    qemu_log("\t[KERNEL]: Executing warp %u in block (%u, %u, %u)\n", 
+                             warp_id, x, y, z);
                     int ret = gpgpu_core_exec_warp(s, &warp, 100000);
                     if (ret != 0) {
+                        qemu_log("\t[KERNEL]: ERROR - Warp execution failed with code %d\n", ret);
                         return -1;
                     }
+                    qemu_log("\t[KERNEL]: Warp %u completed successfully\n", warp_id);
                 }
+                qemu_log("\t[KERNEL]: Block (%u, %u, %u) completed\n", x, y, z);
             }
         }
     }
+    qemu_log("\t[KERNEL]: Kernel execution completed successfully\n");
     return 0;
 }
