@@ -134,6 +134,41 @@ GPGPUError gpgpuVecAdd(GPGPUDevice dev, GPGPUKernel kernel,
                        const void *a, const void *b, void *c, uint32_t n);
 
 /* ============================================================
+ * 日志级别控制
+ * ============================================================ */
+
+/**
+ * 日志级别常量（与 QEMU 侧 GPGPULogLevel 对应）
+ */
+#define GPGPU_LOG_OFF   0
+#define GPGPU_LOG_ERROR 1
+#define GPGPU_LOG_INFO  2
+#define GPGPU_LOG_DEV   3
+#define GPGPU_LOG_CORE  4
+#define GPGPU_LOG_INST  5
+#define GPGPU_LOG_TRACE 6
+
+/**
+ * 日志类别掩码（与 QEMU 侧 GPGPULogCategory 对应）
+ */
+#define GPGPU_CAT_DEVICE  (1 << 0)
+#define GPGPU_CAT_CORE    (1 << 1)
+#define GPGPU_CAT_INST    (1 << 2)
+#define GPGPU_CAT_DMA     (1 << 3)
+#define GPGPU_CAT_INTR    (1 << 4)
+#define GPGPU_CAT_ALL     0xFF
+
+/**
+ * gpgpuSetLogLevel - 运行时修改 QEMU 模拟器侧的日志输出级别
+ * @dev:        设备句柄
+ * @level:      日志级别 (GPGPU_LOG_OFF ~ GPGPU_LOG_TRACE)
+ * @categories: 类别掩码 (GPGPU_CAT_*，0 表示不修改类别)
+ *
+ * 通过写 GPGPU_REG_LOG_LEVEL 寄存器立即生效，无需重启 QEMU。
+ */
+GPGPUError gpgpuSetLogLevel(GPGPUDevice dev, uint32_t level, uint32_t categories);
+
+/* ============================================================
  * 工具函数
  * ============================================================ */
 

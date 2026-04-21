@@ -416,6 +416,35 @@ static long gpgpu_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
         break;
     }
 
+    case GPGPU_IOCTL_SET_LOG_LEVEL:
+    {
+        struct gpgpu_log_params params;
+
+        if (copy_from_user(&params, (void __user *)arg, sizeof(params)))
+            return -EFAULT;
+
+        if (params.level > 6) {
+            dev_warn(&gdev->pdev->dev,
+                     "Invalid log level %u (max 6)\n", params.level);
+            return -EINVAL;
+        }
+
+        /*
+         * bits[7:0]  = level
+         * bits[15:8] = categories (0 表示不修改类别，保持全开)
+         */
+        u32 reg_val = params.level & 0xFF;
+        if (params.categories != 0)
+            reg_val |= (params.categories & 0xFF) << 8;
+
+        gpgpu_writel(gdev, GPGPU_REG_LOG_LEVEL, reg_val);
+
+        dev_info(&gdev->pdev->dev,
+                 "Log level set: level=%u categories=0x%02x\n",
+                 params.level, params.categories & 0xFF);
+        break;
+    }
+
     default:
         dev_dbg(&gdev->pdev->dev, "Unknown ioctl cmd=0x%x\n", cmd);
         return -ENOTTY;

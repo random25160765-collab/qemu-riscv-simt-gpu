@@ -362,6 +362,27 @@ GPGPUError gpgpuVecAdd(GPGPUDevice dev, GPGPUKernel kernel,
  * 工具函数
  * ============================================================ */
 
+/* ============================================================
+ * 日志级别控制
+ * ============================================================ */
+
+GPGPUError gpgpuSetLogLevel(GPGPUDevice dev, uint32_t level, uint32_t categories)
+{
+    GPGPUDevicePriv *p = (GPGPUDevicePriv *)dev;
+    struct gpgpu_log_params params = {
+        .level      = level,
+        .categories = categories,
+    };
+
+    if (!p) return GPGPU_ERROR_INVALID_DEVICE;
+    if (level > GPGPU_LOG_TRACE) return GPGPU_ERROR_INVALID_VALUE;
+
+    if (ioctl(p->fd, GPGPU_IOCTL_SET_LOG_LEVEL, &params) < 0)
+        return GPGPU_ERROR_INVALID_DEVICE;
+
+    return GPGPU_SUCCESS;
+}
+
 const char* gpgpuGetErrorString(GPGPUError error) {
     switch (error) {
     case GPGPU_SUCCESS: return "Success";

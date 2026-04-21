@@ -13,9 +13,10 @@
 #ifndef HW_GPGPU_CORE_H
 #define HW_GPGPU_CORE_H
 
-/* 所有的调试选项在这里调整 */
-#define DEBUG_OPCODE_TABLE
-#define DEBUG_INST
+/* 调试选项已移至运行时日志系统 gpgpu_log.h 控制：
+ *   - 原 DEBUG_OPCODE_TABLE → GPGPU_LOG_INFO 级别 (level >= 2)
+ *   - 原 DEBUG_INST         → GPGPU_LOG_INST  级别 (level >= 5)
+ * 通过写 GPGPU_REG_LOG_LEVEL 寄存器或 ioctl 运行时调节，无需重新编译。 */
 
 #include "qemu/osdep.h"
 #include "fpu/softfloat.h"

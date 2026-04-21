@@ -66,6 +66,11 @@
 #define GPGPU_REG_SHARED_MEM_SIZE   0x0328  /* 共享内存大小 */
 #define GPGPU_REG_DISPATCH          0x0330  /* 启动内核 (写任意值) */
 
+/* 日志控制寄存器组 (0x0500) */
+#define GPGPU_REG_LOG_LEVEL         0x0500  /* 日志级别控制
+                                             *   bits[7:0]  : 级别 (0=OFF..6=TRACE)
+                                             *   bits[15:8] : 类别掩码 (0=不修改) */
+
 /* DMA 引擎寄存器组 (0x0400 - 0x04FF) */
 #define GPGPU_REG_DMA_SRC_LO        0x0400  /* 源地址低 32 位 */
 #define GPGPU_REG_DMA_SRC_HI        0x0404  /* 源地址高 32 位 */

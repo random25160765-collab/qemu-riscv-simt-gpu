@@ -3,7 +3,6 @@
 
 #include "gpgpu_core.h"
 #include "qemu/osdep.h"
-#include "debug.h"   // 引入调试宏系统
 
 #ifdef DEBUG_OPCODE_TABLE
 #define IF_DEBUG_OPCODE_TABLE(code) code
@@ -125,15 +124,7 @@ static inline uint32_t pattern_to_match(const char *pattern) {
 #define EXEC_FUNC_IN(name, code) \
     static void __attribute__((unused)) exec_##name(exec_ctx_t *ctx, int lane_id) { \
         INIT_LANE_CONTEXT_IN(); \
-        IF_DEBUG_INST( \
-            LogTrace("[EXEC] %-10s lane=%d pc=0x%08x rs1=%-2d(0x%08x) rs2=%-2d(0x%08x) imm=%d", \
-                     #name, lane_id, old_pc, ctx->rs1, src1, ctx->rs2, src2, imm); \
-        ) \
         code \
-        IF_DEBUG_INST( \
-            LogTrace("[RES ] %-10s lane=%d rd=%-2d val=0x%08x (%d)", \
-                     #name, lane_id, ctx->rd, G(rd), G_I32(rd)); \
-        ) \
         FINISH_LANE_CONTEXT(); \
     }
 
@@ -141,10 +132,6 @@ static inline uint32_t pattern_to_match(const char *pattern) {
 #define EXEC_FUNC_FP(name, code) \
     static void __attribute__((unused)) exec_##name(exec_ctx_t *ctx, int lane_id) { \
         INIT_LANE_CONTEXT_FP(); \
-        IF_DEBUG_INST( \
-            LogTrace("[EXEC] %-10s lane=%d pc=0x%08x rs1=%-2d(0x%08x) rs2=%-2d(0x%08x) rs3=%-2d(0x%08x) imm=%d", \
-                     #name, lane_id, old_pc, ctx->rs1, F(rs1), ctx->rs2, F(rs2), ctx->rs3, F(rs3), imm); \
-        ) \
         /* sync_fcsr_to_fp_status */ \
         do { \
             uint8_t __frm = (l->fcsr >> 5) & 0x7; \
@@ -161,10 +148,6 @@ static inline uint32_t pattern_to_match(const char *pattern) {
             uint8_t __fflags = l->fp_status.float_exception_flags & 0x1F; \
             l->fcsr = (l->fcsr & ~0x1F) | __fflags; \
         } while(0); \
-        IF_DEBUG_INST( \
-            LogTrace("[RES ] %-10s lane=%d rd=%-2d val=0x%08x (%f)", \
-                     #name, lane_id, ctx->rd, F(rd), F_CF(rd)); \
-        ) \
         FINISH_LANE_CONTEXT(); \
     }
 
@@ -172,13 +155,7 @@ static inline uint32_t pattern_to_match(const char *pattern) {
 #define EXEC_FUNC_NO(name, code) \
     static void __attribute__((unused)) exec_##name(exec_ctx_t *ctx, int lane_id) { \
         INIT_LANE_CONTEXT_NO(); \
-        IF_DEBUG_INST( \
-            LogTrace("[EXEC] %-10s lane=%d imm=%d", #name, lane_id, imm); \
-        ) \
         code \
-        IF_DEBUG_INST( \
-            LogTrace("[RES ] %-10s lane=%d", #name, lane_id); \
-        ) \
         FINISH_LANE_CONTEXT(); \
     }
 

@@ -61,9 +61,9 @@ driver: $(DRIVER_KO)
 $(DRIVER_KO): $(DRIVER_DIR)/gpgpu.c $(DRIVER_DIR)/gpgpu.h $(DRIVER_DIR)/gpgpu_ioctl.h
 	@mkdir -p $(BIN_DIR)/driver
 	@echo "  CC       gpgpu.ko"
-	@$(MAKE) -C /lib/modules/$(shell uname -r)/build M=$(PWD)/$(DRIVER_DIR) modules > /dev/null 2>&1
+	$(MAKE) -C /lib/modules/$(shell uname -r)/build M=$(PWD)/$(DRIVER_DIR) modules
 	@mv $(DRIVER_DIR)/gpgpu.ko $(BIN_DIR)/driver/
-	@$(MAKE) -C /lib/modules/$(shell uname -r)/build M=$(PWD)/$(DRIVER_DIR) clean > /dev/null 2>&1
+	$(MAKE) -C /lib/modules/$(shell uname -r)/build M=$(PWD)/$(DRIVER_DIR) clean
 
 .PHONY: install
 install: $(DRIVER_KO)

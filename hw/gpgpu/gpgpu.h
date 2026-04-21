@@ -98,6 +98,12 @@ OBJECT_DECLARE_SIMPLE_TYPE(GPGPUState, GPGPU)
 #define GPGPU_REG_SHARED_MEM_SIZE   0x0328  /* 每个 Block 的共享内存大小 */
 #define GPGPU_REG_DISPATCH          0x0330  /* 写任意值启动内核执行 */
 
+/* 日志控制寄存器组 (0x0500): 运行时控制 QEMU 侧日志输出 */
+#define GPGPU_REG_LOG_LEVEL         0x0500  /* 日志级别寄存器
+                                             *   bits[7:0]  : 级别 (0=OFF,1=ERR,2=INFO,3=DEV,4=CORE,5=INST,6=TRACE)
+                                             *   bits[15:8] : 类别掩码 (位0=DEVICE,位1=CORE,位2=INST,位3=DMA,位4=INTR)
+                                             *   写入后立即生效，无需重启 */
+
 /* DMA 引擎寄存器组 (0x0400 - 0x04FF): 主机与显存之间的数据传输 */
 #define GPGPU_REG_DMA_SRC_LO        0x0400  /* DMA 源地址低 32 位 */
 #define GPGPU_REG_DMA_SRC_HI        0x0404  /* DMA 源地址高 32 位 */
