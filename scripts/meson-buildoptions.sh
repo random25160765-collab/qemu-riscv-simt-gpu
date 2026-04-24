@@ -79,6 +79,7 @@ meson_options_help() {
   printf "%s\n" '  --sysconfdir=VALUE       Sysconf data directory [etc]'
   printf "%s\n" '  --tls-priority=VALUE     Default TLS protocol/cipher priority string'
   printf "%s\n" '                           [NORMAL]'
+  printf "%s\n" '  --vortex-home=VALUE      Path to Vortex source tree (for SimX backend)'
   printf "%s\n" '  --with-coroutine=CHOICE  coroutine backend to use (choices:'
   printf "%s\n" '                           auto/sigaltstack/ucontext/wasm/windows)'
   printf "%s\n" '  --with-pkgversion=VALUE  use specified string as sub-version of the'
@@ -572,6 +573,7 @@ _meson_option_parse() {
     --disable-vnc-jpeg) printf "%s" -Dvnc_jpeg=disabled ;;
     --enable-vnc-sasl) printf "%s" -Dvnc_sasl=enabled ;;
     --disable-vnc-sasl) printf "%s" -Dvnc_sasl=disabled ;;
+    --vortex-home=*) quote_sh "-Dvortex_home=$2" ;;
     --enable-vpc) printf "%s" -Dvpc=enabled ;;
     --disable-vpc) printf "%s" -Dvpc=disabled ;;
     --enable-vte) printf "%s" -Dvte=enabled ;;

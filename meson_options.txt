@@ -392,3 +392,6 @@ option('rust', type: 'feature', value: 'disabled',
        description: 'Rust support')
 option('strict_rust_lints', type: 'boolean', value: false,
        description: 'Enable stricter set of Rust warnings')
+
+option('vortex_home', type: 'string', value: '',
+       description: 'Path to Vortex source tree (for SimX backend)')

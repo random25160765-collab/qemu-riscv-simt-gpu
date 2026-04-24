@@ -57,7 +57,9 @@ struct gpgpu_dma_params {
 #define GPGPU_IOCTL_LAUNCH_PARAMS   _IOW(GPGPU_IOC_MAGIC, 8, struct gpgpu_kernel_params)
 
 /* DMA 传输操作 (输入/输出: struct gpgpu_dma_params) */
-#define GPGPU_IOCTL_DMA_XFER             _IOWR(GPGPU_IOC_MAGIC, 9, struct gpgpu_dma_params)
+#define GPGPU_IOCTL_DMA_XFER        _IOWR(GPGPU_IOC_MAGIC, 9, struct gpgpu_dma_params)
+
+#define GPGPU_IOCTL_SET_BACKEND     _IOW(GPGPU_IOC_MAGIC, 10, struct gpgpu_backend_params)
 
 /**
  * struct gpgpu_log_params - 日志级别控制参数

@@ -98,12 +98,6 @@ OBJECT_DECLARE_SIMPLE_TYPE(GPGPUState, GPGPU)
 #define GPGPU_REG_SHARED_MEM_SIZE   0x0328  /* 每个 Block 的共享内存大小 */
 #define GPGPU_REG_DISPATCH          0x0330  /* 写任意值启动内核执行 */
 
-/* 日志控制寄存器组 (0x0500): 运行时控制 QEMU 侧日志输出 */
-#define GPGPU_REG_LOG_LEVEL         0x0500  /* 日志级别寄存器
-                                             *   bits[7:0]  : 级别 (0=OFF,1=ERR,2=INFO,3=DEV,4=CORE,5=INST,6=TRACE)
-                                             *   bits[15:8] : 类别掩码 (位0=DEVICE,位1=CORE,位2=INST,位3=DMA,位4=INTR)
-                                             *   写入后立即生效，无需重启 */
-
 /* DMA 引擎寄存器组 (0x0400 - 0x04FF): 主机与显存之间的数据传输 */
 #define GPGPU_REG_DMA_SRC_LO        0x0400  /* DMA 源地址低 32 位 */
 #define GPGPU_REG_DMA_SRC_HI        0x0404  /* DMA 源地址高 32 位 */
@@ -112,6 +106,17 @@ OBJECT_DECLARE_SIMPLE_TYPE(GPGPUState, GPGPU)
 #define GPGPU_REG_DMA_SIZE          0x0410  /* 传输大小 (字节) */
 #define GPGPU_REG_DMA_CTRL          0x0414  /* DMA 控制寄存器 */
 #define GPGPU_REG_DMA_STATUS        0x0418  /* DMA 状态寄存器 */
+
+/* 日志控制寄存器组 (0x0500): 运行时控制 QEMU 侧日志输出 */
+#define GPGPU_REG_LOG_LEVEL         0x0500  /* 日志级别寄存器
+                                             *   bits[7:0]  : 级别 (0=OFF,1=ERR,2=INFO,3=DEV,4=CORE,5=INST,6=TRACE)
+                                             *   bits[15:8] : 类别掩码 (位0=DEVICE,位1=CORE,位2=INST,位3=DMA,位4=INTR)
+                                             *   写入后立即生效，无需重启 */
+
+/* 后端选择寄存器位 (0x0600): 运行时控制 QEMU 使用哪个后端 */
+#define GPGPU_REG_BACKEND_SELECT    0x0600  /* 后端选择寄存器
+                                             *   bits[0]  : 选择后端 (0=Built-in,1=SimX)
+                                             *   写入后立即生效，无需重启 */
 
 /* 线程上下文寄存器组 (0x1000 - 0x1FFF): GPU 线程读取自身 ID */
 #define GPGPU_REG_THREAD_ID_X       0x1000  /* 线程在 Block 中的 X 索引 */
@@ -262,6 +267,12 @@ struct GPGPUState {
 
     /*-- 显存后端存储 --*/
     uint8_t *vram_ptr;              /* 显存数据指针 */
+
+    /*-- 后端选择寄存器 --*/
+    uint32_t backend_select;         /* 后端选择寄存器值 */
+
+    /*-- SimX 后端句柄（CONFIG_GPGPU_SIMX 时有效）--*/
+    void *simx_handle;              /* VxBridgeHandle*，避免 C 文件引入 C++ 头 */
 
     /*-- 全局控制寄存器状态 --*/
     uint32_t global_ctrl;           /* GLOBAL_CTRL 寄存器值 */

@@ -10,7 +10,11 @@
 #define VRAM_SIZE       (64 * 1024 * 1024)  // 64MB
 
 int main() {
-    int fd = open("/dev/gpgpu0", O_RDWR);
+    
+    const char *device_path = getenv("GPGPU_DEVICE");  
+    const char *kernel_dir = getenv("GPGPU_KERNEL_DIR");
+
+    int fd = open(device_path, O_RDWR);
     void *vram = mmap(NULL, 64*1024*1024, PROT_READ | PROT_WRITE,
                       MAP_SHARED, fd, 0);
     
@@ -19,7 +23,9 @@ int main() {
     usleep(10000);
     
     // 读取并写入 kernel
-    FILE *fp = fopen("bin/kernels/vector_add.bin", "rb");
+    char kernel_path[256];
+    snprintf(kernel_path, sizeof(kernel_path), "%s/vector_add.bin", kernel_dir);
+    FILE *fp = fopen(kernel_path, "rb");
     fseek(fp, 0, SEEK_END);
     size_t size = ftell(fp);
     fseek(fp, 0, SEEK_SET);

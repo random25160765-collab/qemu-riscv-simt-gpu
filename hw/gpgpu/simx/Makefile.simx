@@ -1,0 +1,97 @@
+# Makefile.simx — 将 Vortex SimX 编译为静态库 libsimx.a
+# 所有 simx/common .cpp 来自上游 Vortex 仓库；
+# VX_config.h / VX_types.h / dram_sim_stub.cpp 由本目录提供。
+
+VORTEX_HOME ?= /home/rd/courses/vortex
+SIMX_DIR    := $(VORTEX_HOME)/sim/simx
+COMMON_DIR  := $(VORTEX_HOME)/sim/common
+SF_DIR      := $(VORTEX_HOME)/third_party/softfloat
+THIS_DIR    := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
+
+# DESTDIR 可由外部覆盖（meson custom_target 会传入 build 目录）
+DESTDIR     ?= $(THIS_DIR)
+BUILD_DIR   := $(DESTDIR)obj
+LIB_OUT     := $(DESTDIR)libsimx.a
+
+CXX      ?= g++
+AR       ?= ar
+CXXFLAGS := -std=c++17 -O2 -fPIC -DNDEBUG
+CXXFLAGS += -Wno-unused-parameter -Wno-missing-field-initializers
+
+# --- include 路径 ---
+# 1. 本目录（提供 VX_config.h, VX_types.h, dram_sim_stub.cpp）
+CXXFLAGS += -I$(THIS_DIR)
+# 2. 上游 simx（源码头文件）
+CXXFLAGS += -I$(SIMX_DIR)
+# 3. 上游 common（mem.h, util.h, simobject.h, bitmanip.h 等）
+CXXFLAGS += -I$(COMMON_DIR)
+# 4. Berkeley softfloat-3 头文件
+CXXFLAGS += -I$(SF_DIR)/source/include
+CXXFLAGS += -I$(SF_DIR)/build/Linux-x86_64-GCC
+# XLEN_64 由 VX_config.h 定义，不在命令行重复传入
+
+# --- 需要编译的源文件 ---
+# common 层（排除 dram_sim.cpp，用 stub 替换）
+COMMON_SRCS := \
+    $(COMMON_DIR)/util.cpp \
+    $(COMMON_DIR)/mem.cpp \
+    $(COMMON_DIR)/softfloat_ext.cpp \
+    $(COMMON_DIR)/rvfloats.cpp
+
+# simx 核心（排除 main.cpp / VortexGPGPU.cpp / tensor_unit / vec_unit / voperands / vopc）
+SIMX_SRCS := \
+    $(SIMX_DIR)/processor.cpp \
+    $(SIMX_DIR)/cluster.cpp \
+    $(SIMX_DIR)/socket.cpp \
+    $(SIMX_DIR)/core.cpp \
+    $(SIMX_DIR)/emulator.cpp \
+    $(SIMX_DIR)/decode.cpp \
+    $(SIMX_DIR)/opc_unit.cpp \
+    $(SIMX_DIR)/dispatcher.cpp \
+    $(SIMX_DIR)/execute.cpp \
+    $(SIMX_DIR)/func_unit.cpp \
+    $(SIMX_DIR)/cache_sim.cpp \
+    $(SIMX_DIR)/mem_sim.cpp \
+    $(SIMX_DIR)/local_mem.cpp \
+    $(SIMX_DIR)/mem_coalescer.cpp \
+    $(SIMX_DIR)/dcrs.cpp \
+    $(SIMX_DIR)/types.cpp \
+    $(SIMX_DIR)/operands.cpp \
+    $(SIMX_DIR)/vortex_simulator.cpp
+
+# dram_sim stub（本目录）
+STUB_SRCS := $(THIS_DIR)dram_sim_stub.cpp
+
+ALL_SRCS := $(COMMON_SRCS) $(SIMX_SRCS) $(STUB_SRCS)
+
+# --- 目标文件路径 ---
+COMMON_OBJS := $(patsubst $(COMMON_DIR)/%.cpp, $(BUILD_DIR)/common/%.o, $(COMMON_SRCS))
+SIMX_OBJS   := $(patsubst $(SIMX_DIR)/%.cpp,   $(BUILD_DIR)/simx/%.o,   $(SIMX_SRCS))
+STUB_OBJS   := $(patsubst $(THIS_DIR)%.cpp,     $(BUILD_DIR)/stub/%.o,   $(STUB_SRCS))
+ALL_OBJS    := $(COMMON_OBJS) $(SIMX_OBJS) $(STUB_OBJS)
+
+.PHONY: all clean
+
+all: $(LIB_OUT)
+
+$(LIB_OUT): $(ALL_OBJS)
+	$(AR) crs $@ $^
+	@echo "[libsimx] Built $@"
+
+# common 源文件
+$(BUILD_DIR)/common/%.o: $(COMMON_DIR)/%.cpp
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -c $< -o $@
+
+# simx 源文件
+$(BUILD_DIR)/simx/%.o: $(SIMX_DIR)/%.cpp
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -c $< -o $@
+
+# stub 源文件
+$(BUILD_DIR)/stub/%.o: $(THIS_DIR)%.cpp
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) -c $< -o $@
+
+clean:
+	rm -rf $(BUILD_DIR) $(LIB_OUT)

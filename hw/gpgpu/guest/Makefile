@@ -7,19 +7,24 @@ KERNEL_DIR = kernel
 PYTHON_DIR = python
 BIN_DIR = bin
 
+export GPGPU_DEVICE = /dev/gpgpu0
+export GPGPU_KERNEL_DIR = $(BIN_DIR)/kernel
+
 include scripts/toolchain.mk
 include scripts/control.mk
 include scripts/test.mk
+include scripts/common.mk
 
 RISCV_PREFIX = riscv64-linux-gnu-
 RISCV_CC = $(RISCV_PREFIX)gcc
 RISCV_CXX = $(RISCV_PREFIX)g++
 RISCV_AR = $(RISCV_PREFIX)ar
+RISCV_LD = $(RISCV_PREFIX)ld
 RISCV_OBJCOPY = $(RISCV_PREFIX)objcopy
 RISCV_STRIP = $(RISCV_PREFIX)strip
 
 RISCV_CFLAGS_KERNEL = -march=rv32g -mabi=ilp32 -O2 -nostdlib -ffreestanding
-RISCV_LDFLAGS_KERNEL = -nostdlib -T $(KERNEL_DIR)/kernel.ld
+RISCV_LDFLAGS_KERNEL = -T $(KERNEL_DIR)/kernel.ld
 
 RISCV_CFLAGS_RUNTIME = -march=rv64gc -mabi=lp64d -O2 -Wall -fPIC
 RISCV_CXXFLAGS_RUNTIME = -std=c++17 -O2 -Wall -fPIC -Wno-attributes
@@ -31,7 +36,7 @@ RISCV_PYTHON_INC = $(RISCV_TOOLCHAIN_DIR)/include/python3.13
 RISCV_PYTHON_LIB = $(RISCV_TOOLCHAIN_DIR)/lib
 
 HOST_CC = gcc
-HOST_CFLAGS = -Wall -O2 -I$(RUNTIME_DIR) -I$(DRIVER_DIR)
+HOST_CFLAGS = -Wall -I$(RUNTIME_DIR) -I$(DRIVER_DIR)
 HOST_LDFLAGS = -lm
 
 RISCV_PY_CXXFLAGS = $(RISCV_CXXFLAGS_RUNTIME) -shared \
@@ -68,8 +73,9 @@ $(BIN_DIR)/kernel/%.bin: $(KERNEL_DIR)/%.S $(KERNEL_DIR)/kernel.ld
 	@mkdir -p $(BIN_DIR)/kernel
 	@echo "  KERNEL   $*"
 	$(RISCV_CC) -c $(RISCV_CFLAGS_KERNEL) $< -o $(BIN_DIR)/kernel/$*.o
-	$(RISCV_CC) $(RISCV_LDFLAGS_KERNEL) $(BIN_DIR)/kernel/$*.o -o $(BIN_DIR)/kernel/$*.elf
+	$(RISCV_LD) $(RISCV_LDFLAGS_KERNEL) $(BIN_DIR)/kernel/$*.o -o $(BIN_DIR)/kernel/$*.elf
 	$(RISCV_OBJCOPY) -O binary $(BIN_DIR)/kernel/$*.elf $@
+	@rm -f $(BIN_DIR)/kernel/$*.o $(BIN_DIR)/kernel/$*.elf
 
 runtime: $(RUNTIME_LIB)
 $(RUNTIME_LIB): $(RUNTIME_DIR)/gpgpu_runtime.c $(RUNTIME_DIR)/gpgpu_runtime.h

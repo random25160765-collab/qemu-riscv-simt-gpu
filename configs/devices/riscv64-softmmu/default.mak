@@ -4,6 +4,9 @@
 # CONFIG_PCI_DEVICES=n
 # CONFIG_TEST_DEVICES=n
 
+# Enable Vortex SimX backend for GPGPU device
+CONFIG_GPGPU_SIMX=y
+
 # Boards are selected by default, uncomment to keep out of the build.
 # CONFIG_SPIKE=n
 # CONFIG_SIFIVE_E=n

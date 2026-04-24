@@ -15,7 +15,6 @@
 #include <sys/stat.h>
 #include <errno.h>
 
-#define DEVICE_PATH     "/dev/gpgpu0"
 #define VRAM_SIZE       (64 * 1024 * 1024)  // 64MB
 #define TEST_SIZE       4096                // 测试 4KB
 
@@ -26,11 +25,17 @@ int main(int argc, char *argv[])
     int i;
     int ret = 0;
 
+    const char *device_path = getenv("GPGPU_DEVICE");
+    if (device_path == NULL) {
+        printf("Warning: GPGPU_DEVICE environment variable not set.\n");
+        return 1;
+    }
+
     printf("=== GPGPU VRAM mmap Test ===\n\n");
 
     // 1. 打开设备
-    printf("Opening device: %s\n", DEVICE_PATH);
-    fd = open(DEVICE_PATH, O_RDWR);
+    printf("Opening device: %s\n", device_path);
+    fd = open(device_path, O_RDWR);
     if (fd < 0) {
         perror("open failed");
         return 1;

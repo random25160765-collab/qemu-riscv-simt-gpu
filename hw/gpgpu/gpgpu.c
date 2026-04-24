@@ -22,6 +22,7 @@
 #include "gpgpu.h"
 #include "gpgpu_core.h"
 #include "gpgpu_log.h"
+#include "vortex_bridge.h"
 
 /* Forward declarations */
 static void gpgpu_kernel_complete(void *opaque);
@@ -150,6 +151,18 @@ static uint64_t gpgpu_ctrl_read(void *opaque, hwaddr addr, unsigned size)
             val = gpu->dma.status;
             GPGPU_DEV("[DEVICE]: Read DMA_STATUS: 0x%x\n", (uint32_t)val);
             break;
+        case GPGPU_REG_LOG_LEVEL:
+            /* bits[7:0]=level, bits[15:8]=categories */
+            val = ((uint32_t)gpgpu_log_level & 0xFF) |
+                  (((uint32_t)gpgpu_log_categories & 0xFF) << 8);
+            GPGPU_DEV("[DEVICE]: Read LOG_LEVEL: level=%u categories=0x%02x\n",
+                      (uint32_t)gpgpu_log_level,
+                      (uint32_t)(gpgpu_log_categories & 0xFF));
+            break;
+        case GPGPU_REG_BACKEND_SELECT:
+            val = gpu->backend_select;
+            GPGPU_DEV("[DEVICE]: Read BACKEND_SELECT: 0x%s\n", (uint32_t)val ? "SimX" : "Built-in");
+            break;
         case GPGPU_REG_THREAD_ID_X:
             val = gpu->simt.thread_id[0];
             GPGPU_DEV("[DEVICE]: Read THREAD_ID_X: %u\n", (uint32_t)val);
@@ -185,14 +198,6 @@ static uint64_t gpgpu_ctrl_read(void *opaque, hwaddr addr, unsigned size)
         case GPGPU_REG_THREAD_MASK:
             val = gpu->simt.thread_mask;
             GPGPU_DEV("[DEVICE]: Read THREAD_MASK: 0x%lx\n", val);
-            break;
-        case GPGPU_REG_LOG_LEVEL:
-            /* bits[7:0]=level, bits[15:8]=categories */
-            val = ((uint32_t)gpgpu_log_level & 0xFF) |
-                  (((uint32_t)gpgpu_log_categories & 0xFF) << 8);
-            GPGPU_DEV("[DEVICE]: Read LOG_LEVEL: level=%u categories=0x%02x\n",
-                      (uint32_t)gpgpu_log_level,
-                      (uint32_t)(gpgpu_log_categories & 0xFF));
             break;
         default:
             GPGPU_DEV("[DEVICE]: Unknown register read: 0x%lx\n", addr);
@@ -288,7 +293,7 @@ static void gpgpu_ctrl_write(void *opaque, hwaddr addr, uint64_t val,
             /* Clear previous error status when starting new kernel */
             gpu->error_status = 0;
             gpu->irq_status &= ~GPGPU_IRQ_ERROR;
-            
+            /* 处理异常数据 */
             if (gpu->global_status != GPGPU_STATUS_READY ||
                 gpu->kernel.grid_dim[0] == 0 || gpu->kernel.grid_dim[1] == 0 ||
                 gpu->kernel.grid_dim[2] == 0 ||
@@ -354,6 +359,19 @@ static void gpgpu_ctrl_write(void *opaque, hwaddr addr, uint64_t val,
         case GPGPU_REG_DMA_STATUS:
             GPGPU_DEV("[DEVICE]: DMA_STATUS write ignored (read-only)\n");
             break;
+        case GPGPU_REG_LOG_LEVEL:
+            /* bits[7:0]=level, bits[15:8]=categories */
+            gpgpu_log_set_level((GPGPULogLevel)(val & 0xFF));
+            if (val & 0xFF00) {
+                gpgpu_log_set_categories((val >> 8) & 0xFF);
+            }
+            GPGPU_DEV("[DEVICE]: LOG_LEVEL set to level=%u categories=0x%02x\n",
+                      (uint32_t)(val & 0xFF), (uint32_t)((val >> 8) & 0xFF));
+            break;
+        case GPGPU_REG_BACKEND_SELECT:
+            gpu->backend_select = val;
+            GPGPU_DEV("[DEVICE]: BACKEND_SELECT set to %s\n", (uint32_t)val ? "SimX" : "Built-in");
+            break;
         case GPGPU_REG_THREAD_ID_X:
             gpu->simt.thread_id[0] = val;
             GPGPU_DEV("[DEVICE]: THREAD_ID_X set to %u\n", (uint32_t)val);
@@ -392,15 +410,6 @@ static void gpgpu_ctrl_write(void *opaque, hwaddr addr, uint64_t val,
         case GPGPU_REG_THREAD_MASK:
             gpu->simt.thread_mask = val;
             GPGPU_DEV("[DEVICE]: THREAD_MASK set to 0x%lx\n", val);
-            break;
-        case GPGPU_REG_LOG_LEVEL:
-            /* bits[7:0]=level, bits[15:8]=categories */
-            gpgpu_log_set_level((GPGPULogLevel)(val & 0xFF));
-            if (val & 0xFF00) {
-                gpgpu_log_set_categories((val >> 8) & 0xFF);
-            }
-            GPGPU_DEV("[DEVICE]: LOG_LEVEL set to level=%u categories=0x%02x\n",
-                      (uint32_t)(val & 0xFF), (uint32_t)((val >> 8) & 0xFF));
             break;
         default:
             GPGPU_DEV("[DEVICE]: Unknown register write: 0x%lx, value=0x%lx\n", addr, val);
@@ -570,7 +579,13 @@ static void gpgpu_kernel_complete(void *opaque)
     GPGPU_DEV("[DEVICE]: Kernel completion handler called\n");
     GPGPU_DEV("[DEVICE]: Executing kernel at address 0x%lx\n", s->kernel.kernel_addr);
 
-    int ret = gpgpu_core_exec_kernel(s);
+    int ret;
+    if (s->backend_select & 0x1) {
+        ret = vx_bridge_run((VxBridgeHandle *)s->simx_handle,
+                            s->vram_ptr, s->vram_size, s->kernel.kernel_addr);
+    } else {
+        ret = gpgpu_core_exec_kernel(s);
+    }
 
     if (ret == 0) {
         GPGPU_DEV("[DEVICE]: Kernel execution successful, return code=%d\n", ret);
@@ -702,11 +717,27 @@ static void gpgpu_realize(PCIDevice *pdev, Error **errp)
     s->global_status = GPGPU_STATUS_READY;
     GPGPU_DEV("[DEVICE]: GPGPU device realization completed successfully\n");
     GPGPU_DEV("[DEVICE]: Device status set to READY\n");
+
+    /* 初始化 SimX 后端句柄 */
+    /* 默认创建，后续根据后端选择寄存器判断是否使用 */
+    s->simx_handle = vx_bridge_create(s->num_cus, s->warps_per_cu, s->warp_size);
+
+    if (!s->simx_handle) {
+        GPGPU_DEV("[DEVICE]: SimX backend unavailable, using built-in interpreter\n");
+    } else {
+        GPGPU_DEV("[DEVICE]: SimX backend created (cores=%u warps=%u threads=%u)\n",
+                   s->num_cus, s->warps_per_cu, s->warp_size);
+    }
 }
 
 static void gpgpu_exit(PCIDevice *pdev)
 {
     GPGPUState *s = GPGPU(pdev);
+
+    if (s->simx_handle) {
+        vx_bridge_destroy((VxBridgeHandle *)s->simx_handle);
+        s->simx_handle = NULL;
+    }
 
     timer_free(s->dma_timer);
     timer_free(s->kernel_timer);

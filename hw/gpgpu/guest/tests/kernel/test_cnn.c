@@ -76,11 +76,11 @@ int main() {
 
     // 加载 kernels 到 VRAM
     size_t sz;
-    load_file(vram, 0x0000, "bin/kernels/conv2d.bin", &sz);
-    load_file(vram, 0x1000, "bin/kernels/relu.bin", &sz);
-    load_file(vram, 0x2000, "bin/kernels/maxpool.bin", &sz);
-    load_file(vram, 0x3000, "bin/kernels/matmul.bin", &sz);
-    load_file(vram, 0x4000, "bin/kernels/softmax_exp.bin", &sz);
+    load_file(vram, 0x0000, "bin/kernel/conv2d.bin", &sz);
+    load_file(vram, 0x1000, "bin/kernel/relu.bin", &sz);
+    load_file(vram, 0x2000, "bin/kernel/maxpool.bin", &sz);
+    load_file(vram, 0x3000, "bin/kernel/matmul.bin", &sz);
+    load_file(vram, 0x4000, "bin/kernel/softmax_exp.bin", &sz);
     printf("Kernels loaded\n\n");
 
     // 1. 生成随机输入 8x8

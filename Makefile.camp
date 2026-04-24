@@ -27,7 +27,8 @@ CONFIGURE_FLAGS := \
     --target-list=riscv64-softmmu,riscv64-linux-user \
     --extra-cflags='-O0 -g3' \
     --cross-prefix-riscv64=$(CROSS_PREFIX) \
-    --enable-rust
+    --enable-rust \
+    -Dvortex_home=/home/rd/courses/vortex
 
 # Parallel jobs (default: nproc)
 NPROC := $(shell nproc 2>/dev/null || echo 4)

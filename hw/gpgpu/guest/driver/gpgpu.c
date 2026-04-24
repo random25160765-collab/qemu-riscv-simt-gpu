@@ -359,11 +359,13 @@ static long gpgpu_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
     }
 
     case GPGPU_IOCTL_RESET:
+    {
         // 软复位设备
         gpgpu_writel(gdev, GPGPU_REG_GLOBAL_CTRL, GPGPU_CTRL_RESET);
         msleep(10);
         dev_info(&gdev->pdev->dev, "Device reset\n");
         break;
+    }
 
     case GPGPU_IOCTL_LAUNCH_PARAMS:
     {
@@ -765,5 +767,5 @@ module_init(gpgpu_init);
 module_exit(gpgpu_exit);
 
 MODULE_LICENSE("GPL");
-MODULE_AUTHOR("Your Name");
+MODULE_AUTHOR("rd");
 MODULE_DESCRIPTION("GPGPU PCI Device Driver");
