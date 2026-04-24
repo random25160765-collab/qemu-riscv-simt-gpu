@@ -354,6 +354,74 @@ op_conv2d_multi(std::shared_ptr<TensorWrapper> inp,
     return result;
 }
 
+// --- bias_add：广播加法，inp shape (C, H, W)，bias shape (C,)
+//   output: (C, H, W)
+static std::shared_ptr<TensorWrapper>
+op_bias_add(std::shared_ptr<TensorWrapper> inp,
+            std::shared_ptr<TensorWrapper> bias)
+{
+    check_same_device(*inp, *bias, "bias_add");
+
+    if (inp->shape.size() != 3)
+        throw std::invalid_argument("bias_add: input 必须是 3D (C, H, W)");
+    if (bias->shape.size() != 1)
+        throw std::invalid_argument("bias_add: bias 必须是 1D (C,)");
+
+    uint32_t C  = static_cast<uint32_t>(inp->shape[0]);
+    uint32_t H  = static_cast<uint32_t>(inp->shape[1]);
+    uint32_t W  = static_cast<uint32_t>(inp->shape[2]);
+
+    if (static_cast<uint32_t>(bias->shape[0]) != C)
+        throw std::invalid_argument("bias_add: bias 长度与通道数不匹配");
+
+    uint32_t n  = C * H * W;
+    uint32_t hw = H * W;
+
+    py::array_t<float> out_arr(inp->shape);
+    float *out_ptr = static_cast<float *>(out_arr.request().ptr);
+
+    check_error(gpgpuBiasAdd(inp->device->dev, inp->device->ops.bias_add,
+                              inp->ptr(), bias->ptr(), out_ptr, n, hw),
+                "gpgpuBiasAdd");
+
+    auto result = std::make_shared<TensorWrapper>(out_arr, inp->device);
+    result->shape = inp->shape;
+    return result;
+}
+
+// --- maxpool2x2_multi：多通道 MaxPool 2×2
+//   inp:    3D (C, H, W)，H 和 W 须为偶数
+//   output: 3D (C, H//2, W//2)
+static std::shared_ptr<TensorWrapper>
+op_maxpool2x2_multi(std::shared_ptr<TensorWrapper> x)
+{
+    if (x->shape.size() != 3)
+        throw std::invalid_argument("maxpool2x2_multi: 输入必须是 3D (C, H, W)");
+
+    uint32_t C = static_cast<uint32_t>(x->shape[0]);
+    uint32_t H = static_cast<uint32_t>(x->shape[1]);
+    uint32_t W = static_cast<uint32_t>(x->shape[2]);
+
+    if (H % 2 != 0 || W % 2 != 0)
+        throw std::invalid_argument(
+            "maxpool2x2_multi: H 和 W 必须为偶数，但收到 " + x->shape_str());
+
+    uint32_t out_h = H / 2, out_w = W / 2;
+    std::vector<ssize_t> out_shape = {static_cast<ssize_t>(C),
+                                       static_cast<ssize_t>(out_h),
+                                       static_cast<ssize_t>(out_w)};
+    py::array_t<float> out_arr(out_shape);
+    float *out_ptr = static_cast<float *>(out_arr.request().ptr);
+
+    check_error(gpgpuMaxPool2x2Multi(x->device->dev, x->device->ops.maxpool_multi,
+                                      x->ptr(), out_ptr, C, H, W),
+                "gpgpuMaxPool2x2Multi");
+
+    auto result = std::make_shared<TensorWrapper>(out_arr, x->device);
+    result->shape = out_shape;
+    return result;
+}
+
 // ============================================================
 // 模块定义
 // ============================================================
@@ -489,4 +557,14 @@ Host→Device 拷贝、kernel 执行和 Device→Host 拷贝。
           "多通道 2D 卷积（步长1，无 padding）。\n"
           "input: 3D (C_IN, H, W)  weight: 4D (C_OUT, C_IN, K, K)  "
           "output: 3D (C_OUT, H-K+1, W-K+1)");
+
+    m.def("bias_add", &op_bias_add,
+          py::arg("input"), py::arg("bias"),
+          "广播偏置加法（GPU）。\n"
+          "input: 3D (C, H, W)  bias: 1D (C,)  output: 3D (C, H, W)");
+
+    m.def("maxpool2x2_multi", &op_maxpool2x2_multi,
+          py::arg("x"),
+          "多通道 MaxPool 2×2（单次 GPU 调用处理所有通道）。\n"
+          "input: 3D (C, H, W)  output: 3D (C, H//2, W//2)，H/W 须为偶数");
 }

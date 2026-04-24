@@ -93,8 +93,7 @@ GPGPUError gpgpuFree(GPGPUDevice dev, void *ptr) {
 
 GPGPUError gpgpuMemcpy(GPGPUDevice dev, void *dst, const void *src,
                        size_t size, GPGPUMemcpyKind kind) {
-    GPGPUDevicePriv *p = (GPGPUDevicePriv *)dev;
-    
+    (void)dev;
     switch (kind) {
     case GPGPU_MEMCPY_HOST_TO_DEVICE:
         memcpy(dst, src, size);
@@ -122,7 +121,6 @@ GPGPUError gpgpuMemset(GPGPUDevice dev, void *ptr, int value, size_t size) {
 
 GPGPUError gpgpuKernelLoad(GPGPUDevice dev, GPGPUKernel *kernel,
                            const char *path) {
-    GPGPUDevicePriv *p = (GPGPUDevicePriv *)dev;
     FILE *fp = fopen(path, "rb");
     if (!fp) return GPGPU_ERROR_INVALID_VALUE;
     
@@ -201,13 +199,15 @@ GPGPUError gpgpuLoadOperators(GPGPUDevice dev, GPGPUOperators *ops) {
     err = gpgpuKernelLoad(dev, &ops->field, path); \
     if (err) return err;
 
-    LOAD(relu,        "relu.bin")
-    LOAD(maxpool,     "maxpool.bin")
-    LOAD(conv2d,      "conv2d.bin")
-    LOAD(conv2d_multi,"conv2d_multi.bin")
-    LOAD(matmul,      "matmul.bin")
-    LOAD(softmax,     "softmax_exp.bin")
-    LOAD(vecadd,      "vector_add.bin")
+    LOAD(relu,          "relu.bin")
+    LOAD(maxpool,       "maxpool.bin")
+    LOAD(maxpool_multi, "maxpool_multi.bin")
+    LOAD(conv2d,        "conv2d.bin")
+    LOAD(conv2d_multi,  "conv2d_multi.bin")
+    LOAD(matmul,        "matmul.bin")
+    LOAD(softmax,       "softmax_exp.bin")
+    LOAD(vecadd,        "vector_add.bin")
+    LOAD(bias_add,      "bias_add.bin")
 
 #undef LOAD
     return GPGPU_SUCCESS;
@@ -328,33 +328,74 @@ GPGPUError gpgpuMatMul(GPGPUDevice dev, GPGPUKernel kernel,
 GPGPUError gpgpuSoftmax(GPGPUDevice dev, GPGPUKernel kernel,
                         const void *in, void *out, uint32_t n) {
     GPGPUDevicePriv *p = (GPGPUDevicePriv *)dev;
-    
-    memcpy(p->vram + 0x100000, in, n * sizeof(float));
-    
+
+    /* 数值稳定：先减去最大值，避免 exp 溢出/精度损失 */
+    const float *in_f = (const float *)in;
+    float max_val = in_f[0];
+    for (uint32_t i = 1; i < n; i++)
+        if (in_f[i] > max_val) max_val = in_f[i];
+
+    float *shifted = (float *)(p->vram + 0x100000);
+    for (uint32_t i = 0; i < n; i++)
+        shifted[i] = in_f[i] - max_val;
+
     uint32_t num_blocks = (n + 255) / 256;
     GPGPUError err = gpgpuLaunchKernel(dev, kernel, num_blocks, 1, 1, 256, 1, 1, 0);
     if (err) return err;
-    
+
     float *exp_out = (float *)(p->vram + 0x200000);
     float sum = 0;
     for (uint32_t i = 0; i < n; i++) sum += exp_out[i];
     for (uint32_t i = 0; i < n; i++) ((float*)out)[i] = exp_out[i] / sum;
-    
+
     return GPGPU_SUCCESS;
 }
 
 GPGPUError gpgpuVecAdd(GPGPUDevice dev, GPGPUKernel kernel,
                        const void *a, const void *b, void *c, uint32_t n) {
     GPGPUDevicePriv *p = (GPGPUDevicePriv *)dev;
-    
+
     memcpy(p->vram + 0x100000, a, n * sizeof(float));
     memcpy(p->vram + 0x200000, b, n * sizeof(float));
-    
+
     uint32_t num_blocks = (n + 255) / 256;
     GPGPUError err = gpgpuLaunchKernel(dev, kernel, num_blocks, 1, 1, 256, 1, 1, 0);
     if (err) return err;
-    
+
     memcpy(c, p->vram + 0x300000, n * sizeof(float));
+    return GPGPU_SUCCESS;
+}
+
+GPGPUError gpgpuBiasAdd(GPGPUDevice dev, GPGPUKernel kernel,
+                        const void *in, const void *bias, void *out,
+                        uint32_t n, uint32_t hw) {
+    GPGPUDevicePriv *p = (GPGPUDevicePriv *)dev;
+
+    memcpy(p->vram + 0x100000, in,   n * sizeof(float));
+    memcpy(p->vram + 0x200000, bias, (n / hw) * sizeof(float));
+
+    /* grid_x = ceil(N/256), grid_y = N, grid_z = HW, block_x = 256 */
+    uint32_t num_blocks = (n + 255) / 256;
+    GPGPUError err = gpgpuLaunchKernel(dev, kernel, num_blocks, n, hw, 256, 1, 1, 0);
+    if (err) return err;
+
+    memcpy(out, p->vram + 0x300000, n * sizeof(float));
+    return GPGPU_SUCCESS;
+}
+
+GPGPUError gpgpuMaxPool2x2Multi(GPGPUDevice dev, GPGPUKernel kernel,
+                                const void *in, void *out,
+                                uint32_t c, uint32_t h, uint32_t w) {
+    GPGPUDevicePriv *p = (GPGPUDevicePriv *)dev;
+
+    memcpy(p->vram + 0x100000, in, c * h * w * sizeof(float));
+
+    uint32_t out_h = h / 2, out_w = w / 2;
+    /* grid_x = out_h, grid_y = C, grid_z = H, block_x = out_w, block_y = W */
+    GPGPUError err = gpgpuLaunchKernel(dev, kernel, out_h, c, h, out_w, w, 1, 0);
+    if (err) return err;
+
+    memcpy(out, p->vram + 0x200000, c * out_h * out_w * sizeof(float));
     return GPGPU_SUCCESS;
 }
 

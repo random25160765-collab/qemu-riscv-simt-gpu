@@ -86,11 +86,13 @@ GPGPUError gpgpuLaunchKernel(GPGPUDevice dev, GPGPUKernel kernel,
 typedef struct {
     GPGPUKernel relu;
     GPGPUKernel maxpool;
+    GPGPUKernel maxpool_multi;
     GPGPUKernel conv2d;
     GPGPUKernel conv2d_multi;
     GPGPUKernel matmul;
     GPGPUKernel softmax;
     GPGPUKernel vecadd;
+    GPGPUKernel bias_add;
 } GPGPUOperators;
 
 GPGPUError gpgpuLoadOperators(GPGPUDevice dev, GPGPUOperators *ops);
@@ -132,6 +134,17 @@ GPGPUError gpgpuSoftmax(GPGPUDevice dev, GPGPUKernel kernel,
 // VectorAdd: C = A + B
 GPGPUError gpgpuVecAdd(GPGPUDevice dev, GPGPUKernel kernel,
                        const void *a, const void *b, void *c, uint32_t n);
+
+// BiasAdd: out[c*HW + i] = in[c*HW + i] + bias[c]
+// n = C * H * W, hw = H * W
+GPGPUError gpgpuBiasAdd(GPGPUDevice dev, GPGPUKernel kernel,
+                        const void *in, const void *bias, void *out,
+                        uint32_t n, uint32_t hw);
+
+// MaxPool 2x2 多通道: in[C, H, W] -> out[C, H/2, W/2]
+GPGPUError gpgpuMaxPool2x2Multi(GPGPUDevice dev, GPGPUKernel kernel,
+                                const void *in, void *out,
+                                uint32_t c, uint32_t h, uint32_t w);
 
 /* ============================================================
  * 日志级别控制
