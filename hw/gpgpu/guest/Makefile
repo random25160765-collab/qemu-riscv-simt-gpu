@@ -7,39 +7,46 @@ KERNEL_DIR = kernel
 PYTHON_DIR = python
 BIN_DIR = bin
 
-KERNEL_SRCS = $(wildcard $(KERNEL_DIR)/*.S)
-KERNEL_NAMES = $(basename $(notdir $(KERNEL_SRCS)))
-KERNEL_BINS = $(patsubst $(KERNEL_DIR)/%.S,$(BIN_DIR)/kernel/%.bin,$(KERNEL_SRCS))
+include scripts/toolchain.mk
+include scripts/control.mk
+include scripts/test.mk
 
 RISCV_PREFIX = riscv64-linux-gnu-
-RISCV_CFLAGS = -march=rv32g -mabi=ilp32 -O2 -nostdlib -ffreestanding
-RISCV_LDFLAGS = -T $(KERNEL_DIR)/kernel.ld
+RISCV_CC = $(RISCV_PREFIX)gcc
+RISCV_CXX = $(RISCV_PREFIX)g++
+RISCV_AR = $(RISCV_PREFIX)ar
+RISCV_OBJCOPY = $(RISCV_PREFIX)objcopy
+RISCV_STRIP = $(RISCV_PREFIX)strip
+
+RISCV_CFLAGS_KERNEL = -march=rv32g -mabi=ilp32 -O2 -nostdlib -ffreestanding
+RISCV_LDFLAGS_KERNEL = -nostdlib -T $(KERNEL_DIR)/kernel.ld
+
+RISCV_CFLAGS_RUNTIME = -march=rv64gc -mabi=lp64d -O2 -Wall -fPIC
+RISCV_CXXFLAGS_RUNTIME = -std=c++17 -O2 -Wall -fPIC -Wno-attributes
+
+# Python toolchain
+PROJECT_ROOT := $(shell pwd)
+RISCV_TOOLCHAIN_DIR = $(PROJECT_ROOT)/toolchain
+RISCV_PYTHON_INC = $(RISCV_TOOLCHAIN_DIR)/include/python3.13
+RISCV_PYTHON_LIB = $(RISCV_TOOLCHAIN_DIR)/lib
 
 HOST_CC = gcc
 HOST_CFLAGS = -Wall -O2 -I$(RUNTIME_DIR) -I$(DRIVER_DIR)
 HOST_LDFLAGS = -lm
 
-# Python binding
-PYTHON     ?= python3
-PY_CFLAGS  = $(shell $(PYTHON)-config --includes 2>/dev/null)
-PY_SUFFIX  = $(shell $(PYTHON)-config --extension-suffix 2>/dev/null)
-PYBIND11_INC ?= $(shell $(PYTHON) -c \
-    "import pybind11; print(pybind11.get_include())" 2>/dev/null || \
-    echo "/usr/include/pybind11")
-NUMPY_INC ?= $(shell $(PYTHON) -c \
-    "import numpy; print(numpy.get_include())" 2>/dev/null || \
-    echo "")
-CXX ?= g++
-PY_CXXFLAGS = -std=c++17 -O2 -Wall -fPIC -shared \
-              -I$(RUNTIME_DIR) -I$(DRIVER_DIR) \
-              $(PY_CFLAGS) \
-              -I$(PYBIND11_INC) \
-              $(if $(NUMPY_INC),-I$(NUMPY_INC),)
-PY_LDFLAGS = -L$(BIN_DIR) -lgpgpu -lm
+RISCV_PY_CXXFLAGS = $(RISCV_CXXFLAGS_RUNTIME) -shared \
+                    -I$(RISCV_PYTHON_INC) \
+                    -I$(RISCV_TOOLCHAIN_DIR)/include \
+                    -I$(RUNTIME_DIR) -I$(DRIVER_DIR)
+RISCV_PY_LDFLAGS = -L$(BIN_DIR) -L$(RISCV_PYTHON_LIB) -lgpgpu -lpython3.13
+
+KERNEL_SRCS = $(wildcard $(KERNEL_DIR)/*.S)
+KERNEL_NAMES = $(basename $(notdir $(KERNEL_SRCS)))
+KERNEL_BINS = $(patsubst $(KERNEL_DIR)/%.S,$(BIN_DIR)/kernel/%.bin,$(KERNEL_SRCS))
 
 DRIVER_KO = $(BIN_DIR)/driver/gpgpu.ko
 RUNTIME_LIB = $(BIN_DIR)/libgpgpu.a
-PY_EXT     = $(PYTHON_DIR)/gpgpu$(PY_SUFFIX)
+RISCV_PY_EXT = $(BIN_DIR)/python/gpgpu_riscv.so
 
 ifneq ($(shell which ccache 2>/dev/null),)
     HOST_CC = ccache gcc
@@ -60,28 +67,33 @@ kernel: $(KERNEL_BINS)
 $(BIN_DIR)/kernel/%.bin: $(KERNEL_DIR)/%.S $(KERNEL_DIR)/kernel.ld
 	@mkdir -p $(BIN_DIR)/kernel
 	@echo "  KERNEL   $*"
-	$(RISCV_PREFIX)gcc -c $(RISCV_CFLAGS) $< -o $(BIN_DIR)/kernel/$*.o
-	$(RISCV_PREFIX)ld $(RISCV_LDFLAGS) $(BIN_DIR)/kernel/$*.o -o $(BIN_DIR)/kernel/$*.elf
-	$(RISCV_PREFIX)objcopy -O binary $(BIN_DIR)/kernel/$*.elf $@
+	$(RISCV_CC) -c $(RISCV_CFLAGS_KERNEL) $< -o $(BIN_DIR)/kernel/$*.o
+	$(RISCV_CC) $(RISCV_LDFLAGS_KERNEL) $(BIN_DIR)/kernel/$*.o -o $(BIN_DIR)/kernel/$*.elf
+	$(RISCV_OBJCOPY) -O binary $(BIN_DIR)/kernel/$*.elf $@
 
 runtime: $(RUNTIME_LIB)
 $(RUNTIME_LIB): $(RUNTIME_DIR)/gpgpu_runtime.c $(RUNTIME_DIR)/gpgpu_runtime.h
 	@mkdir -p $(BIN_DIR)
 	@echo "  LIB      libgpgpu.a"
-	$(HOST_CC) -c $(HOST_CFLAGS) $< -o $(BIN_DIR)/gpgpu_runtime.o
-	ar rcs $@ $(BIN_DIR)/gpgpu_runtime.o
+	$(RISCV_CC) -c $(RISCV_CFLAGS_RUNTIME) -I$(DRIVER_DIR) $< -o $(BIN_DIR)/gpgpu_runtime.o
+	$(RISCV_AR) rcs $@ $(BIN_DIR)/gpgpu_runtime.o
 
-python: $(RUNTIME_LIB)
-	@mkdir -p $(PYTHON_DIR)
-	@echo "  PY       $(PY_EXT)"
-	$(CXX) $(PY_CXXFLAGS) \
-		$(PYTHON_DIR)/gpgpu_module.cpp \
-		$(PY_LDFLAGS) \
-		-o $(PY_EXT)
+python: $(RUNTIME_LIB) $(RISCV_PY_EXT)
+$(RISCV_PY_EXT): $(PYTHON_DIR)/gpgpu_module.cpp
+	@mkdir -p $(BIN_DIR)/python
+	@echo "  RISCV    $(notdir $@)"
+	@if [ ! -f "$(RISCV_PYTHON_INC)/Python.h" ]; then \
+		echo "Error: RISC-V Python toolchain not found at $(RISCV_TOOLCHAIN_DIR)"; \
+		echo "Please run: make setup-toolchain"; \
+		exit 1; \
+	fi
+	$(RISCV_CXX) $(RISCV_PY_CXXFLAGS) $< $(RISCV_PY_LDFLAGS) -o $@
+	@file $@
 
 # ============================= Clean Rules ===============================
 
 clean: clean-driver clean-kernel clean-runtime clean-python
+	@rm -rf $(BIN_DIR)
 	@echo "All Cleaned."
 
 clean-driver:
@@ -97,7 +109,7 @@ clean-runtime:
 	@echo "Runtime cleaned."
 
 clean-python:
-	@rm -f $(PYTHON_DIR)/gpgpu*.so
+	@rm -rf $(BIN_DIR)/python
 	@echo "Python cleaned."
 
 .PHONY: driver kernel runtime python

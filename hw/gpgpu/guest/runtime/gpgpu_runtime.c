@@ -129,8 +129,18 @@ GPGPUError gpgpuKernelLoad(GPGPUDevice dev, GPGPUKernel *kernel,
     fseek(fp, 0, SEEK_SET);
     
     void *data = malloc(size);
-    fread(data, 1, size, fp);
+    if (!data) {
+        fclose(fp);
+        return GPGPU_ERROR_OUT_OF_MEMORY;
+    }
+    
+    size_t read_size = fread(data, 1, size, fp);
     fclose(fp);
+    
+    if (read_size != size) {
+        free(data);
+        return GPGPU_ERROR_INVALID_VALUE;
+    }
     
     GPGPUError err = gpgpuKernelLoadFromMemory(dev, kernel, data, size);
     free(data);
