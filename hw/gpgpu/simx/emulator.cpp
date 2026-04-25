@@ -17,6 +17,7 @@
 #include <math.h>
 #include <assert.h>
 #include <util.h>
+#include <cstdio>
 
 #include "emulator.h"
 #include "instr_trace.h"
@@ -100,6 +101,9 @@ void Emulator::reset() {
   startup_addr |= (uint64_t(dcrs_.base_dcrs.read(VX_DCR_BASE_STARTUP_ADDR1)) << 32);
 #endif
 
+  fprintf(stderr, "[SimX] Emulator::reset: core=%d, startup=0x%lx, warps=%zu, threads=%d\n",
+          core_->id(), startup_addr, warps_.size(), arch_.num_threads());
+
   uint64_t startup_arg = dcrs_.base_dcrs.read(VX_DCR_BASE_STARTUP_ARG0);
 #if (XLEN == 64)
   startup_arg |= (uint64_t(dcrs_.base_dcrs.read(VX_DCR_BASE_STARTUP_ARG1)) << 32);
@@ -125,6 +129,10 @@ void Emulator::reset() {
   // activate first warp and thread
   active_warps_.set(0);
   warps_[0].tmask.set(0);
+
+  fprintf(stderr, "[SimX] Emulator::reset: active_warps=0x%lx, tmask[0]=0x%lx\n",
+          active_warps_.to_ulong(), warps_[0].tmask.to_ulong());
+
   wspawn_.valid = false;
 }
 
@@ -620,14 +628,18 @@ void Emulator::update_fcrs(uint32_t fflags, uint32_t wid, uint32_t tid) {
   }
 }
 
-// For riscv-vector test functionality, ecall and ebreak must trap
-// These instructions are used in the vector tests to stop execution of the test
-// Therefore, without these instructions, undefined and incorrect behavior happens
-//
-// For now, we need these instructions to trap for testing the riscv-vector isa
 void Emulator::trigger_ecall() {
+  fprintf(stderr, "[SimX] Emulator::trigger_ecall: core=%d, active_warps before=0x%lx\n",
+          core_->id(), active_warps_.to_ulong());
   active_warps_.reset();
+  fprintf(stderr, "[SimX] Emulator::trigger_ecall: active_warps after=0x%lx\n",
+          active_warps_.to_ulong());
 }
+
 void Emulator::trigger_ebreak() {
+  fprintf(stderr, "[SimX] Emulator::trigger_ebreak: core=%d, active_warps before=0x%lx\n",
+          core_->id(), active_warps_.to_ulong());
   active_warps_.reset();
+  fprintf(stderr, "[SimX] Emulator::trigger_ebreak: active_warps after=0x%lx\n",
+          active_warps_.to_ulong());
 }

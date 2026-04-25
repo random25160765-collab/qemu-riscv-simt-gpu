@@ -71,6 +71,9 @@
                                              *   bits[7:0]  : 级别 (0=OFF..6=TRACE)
                                              *   bits[15:8] : 类别掩码 (0=不修改) */
 
+/* 后端选择寄存器 (0x0600) */
+#define GPGPU_REG_BACKEND_SELECT    0x0600  /* bits[0]: 0=Built-in, 1=SimX */
+
 /* DMA 引擎寄存器组 (0x0400 - 0x04FF) */
 #define GPGPU_REG_DMA_SRC_LO        0x0400  /* 源地址低 32 位 */
 #define GPGPU_REG_DMA_SRC_HI        0x0404  /* 源地址高 32 位 */

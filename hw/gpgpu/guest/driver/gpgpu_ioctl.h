@@ -59,8 +59,6 @@ struct gpgpu_dma_params {
 /* DMA 传输操作 (输入/输出: struct gpgpu_dma_params) */
 #define GPGPU_IOCTL_DMA_XFER        _IOWR(GPGPU_IOC_MAGIC, 9, struct gpgpu_dma_params)
 
-#define GPGPU_IOCTL_SET_BACKEND     _IOW(GPGPU_IOC_MAGIC, 10, struct gpgpu_backend_params)
-
 /**
  * struct gpgpu_log_params - 日志级别控制参数
  * @level:      日志详细程度 (0=OFF, 1=ERR, 2=INFO, 3=DEV, 4=CORE, 5=INST, 6=TRACE)
@@ -74,5 +72,19 @@ struct gpgpu_log_params {
 
 /* 设置 QEMU 模拟器侧日志输出级别 (输入: struct gpgpu_log_params) */
 #define GPGPU_IOCTL_SET_LOG_LEVEL        _IOW(GPGPU_IOC_MAGIC, 10, struct gpgpu_log_params)
+
+/**
+ * struct gpgpu_backend_params - 后端热切换参数
+ * @backend: 目标后端 (GPGPU_BACKEND_BUILTIN=0, GPGPU_BACKEND_SIMX=1)
+ */
+struct gpgpu_backend_params {
+    __u32 backend;
+};
+
+#define GPGPU_BACKEND_BUILTIN   0   /* 内置软件模拟后端 */
+#define GPGPU_BACKEND_SIMX      1   /* SimX/Vortex 后端 */
+
+/* 热切换 QEMU 执行后端 (输入: struct gpgpu_backend_params) */
+#define GPGPU_IOCTL_SET_BACKEND _IOW(GPGPU_IOC_MAGIC, 11, struct gpgpu_backend_params)
 
 #endif /* _GPGPU_IOCTL_H */

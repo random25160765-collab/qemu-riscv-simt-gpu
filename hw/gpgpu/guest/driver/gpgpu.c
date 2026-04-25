@@ -447,6 +447,27 @@ static long gpgpu_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
         break;
     }
 
+    case GPGPU_IOCTL_SET_BACKEND:
+    {
+        struct gpgpu_backend_params params;
+
+        if (copy_from_user(&params, (void __user *)arg, sizeof(params)))
+            return -EFAULT;
+
+        if (params.backend != GPGPU_BACKEND_BUILTIN &&
+            params.backend != GPGPU_BACKEND_SIMX) {
+            dev_warn(&gdev->pdev->dev,
+                     "Invalid backend %u\n", params.backend);
+            return -EINVAL;
+        }
+
+        gpgpu_writel(gdev, GPGPU_REG_BACKEND_SELECT, params.backend);
+
+        dev_info(&gdev->pdev->dev, "Backend switched to %s\n",
+                 params.backend == GPGPU_BACKEND_SIMX ? "SimX" : "Built-in");
+        break;
+    }
+
     default:
         dev_dbg(&gdev->pdev->dev, "Unknown ioctl cmd=0x%x\n", cmd);
         return -ENOTTY;

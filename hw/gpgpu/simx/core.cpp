@@ -439,14 +439,23 @@ int Core::get_exitcode() const {
 }
 
 bool Core::running() const {
-  if (emulator_.running() || !pending_instrs_.empty()) {
-  #ifndef NDEBUG
-    for (auto& trace : pending_instrs_) {
-      DT(5, "pipeline-pending: " << *trace);
-    }
-  #endif
+  bool emu_running = emulator_.running();
+  bool has_pending = !pending_instrs_.empty();
+
+  // 每 200 次调用打印一次状态，避免日志刷屏
+  static int call_count = 0;
+  call_count++;
+  if (call_count % 200 == 1) {
+    fprintf(stderr, "[SimX] Core::running[%d]: emulator=%d pending=%zu (call #%d)\n",
+            core_id_, emu_running, pending_instrs_.size(), call_count);
+  }
+
+  if (emu_running || has_pending) {
     return true;
   }
+
+  fprintf(stderr, "[SimX] Core::running[%d]: DONE! total calls=%d\n",
+          core_id_, call_count);
   return false;
 }
 

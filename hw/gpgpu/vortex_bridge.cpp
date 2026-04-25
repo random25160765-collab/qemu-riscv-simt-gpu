@@ -31,6 +31,7 @@ using namespace vortex;
  * IO 区域只有 0x40~0x7f，不冲突，直接从 0 映射。
  */
 static const uint64_t VRAM_BASE = 0;
+static const uint64_t SIMX_RAM_SIZE = 64 * 1024 * 1024;  // 64 MB，匹配 GPGPU VRAM
 
 struct VxBridgeHandle {
     Arch       arch;
@@ -38,7 +39,7 @@ struct VxBridgeHandle {
     Processor  proc;
 
     VxBridgeHandle(uint32_t num_cores, uint32_t num_warps, uint32_t num_threads)
-        : arch(num_threads, num_warps, num_cores)
+        : arch(num_threads, num_warps, 1)
         , ram(0, MEM_PAGE_SIZE)
         , proc(arch)
     {
@@ -65,21 +66,25 @@ vx_bridge_run(VxBridgeHandle *h,
               uint64_t        vram_size,
               uint64_t        kernel_addr)
 {
-    /* 把整块 VRAM 写入 SimX RAM，映射到 VRAM_BASE 处 */
     h->ram.write(vram, VRAM_BASE, vram_size);
+    fprintf(stderr, "[SimX] RAM write done, size=%lu\n", vram_size);
 
-    /* startup_addr = VRAM_BASE + kernel 在 VRAM 内的偏移 */
     uint64_t startup = VRAM_BASE + kernel_addr;
     h->proc.dcr_write(VX_DCR_BASE_STARTUP_ADDR0, (uint32_t)(startup & 0xffffffffULL));
     h->proc.dcr_write(VX_DCR_BASE_STARTUP_ADDR1, (uint32_t)(startup >> 32));
+    fprintf(stderr, "[SimX] Startup addr=0x%lx, calling run()...\n", startup);
 
     int exitcode = h->proc.run();
+    fprintf(stderr, "[SimX] run() returned %d\n", exitcode);
 
-    /* run() 后 Processor 处于 halted 状态，原地重建以便下次使用 */
+    h->ram.read(const_cast<uint8_t*>(vram), VRAM_BASE, vram_size);
+    fprintf(stderr, "[SimX] RAM read back done\n");
+
     h->proc.~Processor();
     new (&h->proc) Processor(h->arch);
     h->proc.attach_ram(&h->ram);
     h->proc.dcr_write(VX_DCR_BASE_MPM_CLASS, 0);
+    fprintf(stderr, "[SimX] Processor rebuilt\n");
 
     return exitcode;
 }

@@ -14,6 +14,6 @@ config GPGPU
 
 config GPGPU_SIMX
     bool
-    default n
+    default y
     depends on GPGPU
     # 启用后用 Vortex SimX 替换内置解释器执行 kernel
