@@ -11,24 +11,32 @@
  * 可接受；若需要长时间执行应移到独立线程。
  */
 
-#include "vortex_bridge.h"
-
-#include "arch.h"
-#include "processor.h"
-#include "simx_log.h"
-
-/* common 层头文件（来自上游 vortex/sim/common/） */
-#include "mem.h"
-#include "VX_types.h"
-
+// QEMU 基础设施头文件必须排在最前面
 extern "C" {
 #include "qemu/osdep.h"
 #include "qemu/log.h"
 }
 
+// 然后是标准库
 #include <cstdarg>
 #include <cstdio>
 #include <cstring>
+
+// 在包含 SimX 之前，把 QEMU 冲突的宏临时取消
+//    这里用 push/pop 保存现场，防止 SimX 里还有其它冲突宏（如 MAX, ARRAY_SIZE 等）
+#pragma push_macro("MIN")
+#undef MIN
+
+// 上游 SimX / 桥接头文件
+#include "vortex_bridge.h"
+#include "arch.h"
+#include "processor.h"
+#include "simx_log.h"
+#include "mem.h"
+#include "VX_types.h"
+
+// 恢复 QEMU 的 MIN（如果后续代码还需要 QEMU 的宏）
+#pragma pop_macro("MIN")
 
 #pragma GCC diagnostic ignored "-Wsuggest-attribute=format"
 
