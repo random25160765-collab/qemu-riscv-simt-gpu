@@ -33,16 +33,16 @@ static void log_write_null(GPGPULogCategory cat, GPGPULogLevel level,
 /* 路由二：直接输出到 qemu_log（stderr / -D 文件）
  * 消息本身已含 [DEVICE] / \t[KERNEL] / \t\t[INST] 层级标记，
  * 此处不额外添加前缀，保持三级制表缩进层次可读。 */
-static void log_write_stdio(GPGPULogCategory cat, GPGPULogLevel level,
+static void GPGPU_LOG_PRINTF_ATTR
+log_write_stdio(GPGPULogCategory cat, GPGPULogLevel level,
                             const char *file, int line,
                             const char *fmt, va_list args)
 {
     (void)cat; (void)level; (void)file; (void)line;
 
-    va_list args2;
-    va_copy(args2, args);
-    qemu_log(fmt, args2);
-    va_end(args2);
+    char *msg = g_strdup_vprintf(fmt, args);
+    qemu_log("%s", msg);
+    g_free(msg);
 }
 
 /* 路由三：环形缓冲区（内存中循环写入，用于高频日志不阻塞执行） */
