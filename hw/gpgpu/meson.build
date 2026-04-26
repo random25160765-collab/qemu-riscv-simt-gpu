@@ -39,7 +39,6 @@ simx_dep = declare_dependency(
   include_directories: simx_incdirs,
 )
 
-# 当 CONFIG_GPGPU 配置选项被启用时，编译核心设备文件
 system_ss.add(when: 'CONFIG_GPGPU', if_true: files(
     'gpgpu.c',
     'gpgpu_core.c',
@@ -48,9 +47,6 @@ system_ss.add(when: 'CONFIG_GPGPU', if_true: files(
     'memory.c',
 ))
 
-# CONFIG_GPGPU_SIMX：启用 SimX 后端
-# 启用时链接真正的 SimX bridge + libsimx.a；
-# 否则链接 null stub，vx_bridge_create 始终返回 NULL，走内置解释器
 system_ss.add(when: 'CONFIG_GPGPU_SIMX',
   if_true: [files('vortex_bridge.cpp'), simx_dep],
   if_false: files('vortex_bridge_null.c'),

@@ -14,7 +14,7 @@
 /* ============================================================
  * 全局状态
  * ============================================================ */
-GPGPULogLevel     gpgpu_log_level      = GPGPU_LOG_INFO;   /* 默认 INFO */
+GPGPULogLevel     gpgpu_log_level      = GPGPU_LOG_TRACE;   /* 默认 INFO */
 uint32_t          gpgpu_log_categories = 0xFFFFFFFF;        /* 默认全类别开启 */
 GPGPULogWriteFunc gpgpu_log_write_func = NULL;              /* 初始化前为空 */
 

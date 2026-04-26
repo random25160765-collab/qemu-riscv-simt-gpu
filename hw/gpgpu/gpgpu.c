@@ -440,19 +440,15 @@ static uint64_t gpgpu_vram_read(void *opaque, hwaddr addr, unsigned size)
         switch (size) {
             case 1:
                 val = *(uint8_t*)(gpu->vram_ptr + addr);
-                // qemu_log("[DEVICE]: VRAM read byte: 0x%lx -> 0x%02x\n", addr, (uint8_t)val);
                 break;
             case 2:
                 val = *(uint16_t*)(gpu->vram_ptr + addr);
-                // qemu_log("[DEVICE]: VRAM read word: 0x%lx -> 0x%04x\n", addr, (uint16_t)val);
                 break;
             case 4:
                 val = *(uint32_t*)(gpu->vram_ptr + addr);
-                // qemu_log("[DEVICE]: VRAM read dword: 0x%lx -> 0x%08x\n", addr, (uint32_t)val);
                 break;
             case 8:
                 val = *(uint64_t*)(gpu->vram_ptr + addr);
-                // qemu_log("[DEVICE]: VRAM read qword: 0x%lx -> 0x%016lx\n", addr, val);
                 break;
         }
     } else {
@@ -476,19 +472,15 @@ static void gpgpu_vram_write(void *opaque, hwaddr addr, uint64_t val,
         switch (size) {
             case 1:
                 *(uint8_t*)(gpu->vram_ptr + addr) = val;
-                // qemu_log("[DEVICE]: VRAM write byte: 0x%lx <- 0x%02x\n", addr, (uint8_t)val);
                 break;
             case 2:
                 *(uint16_t*)(gpu->vram_ptr + addr) = val;
-                // qemu_log("[DEVICE]: VRAM write word: 0x%lx <- 0x%04x\n", addr, (uint16_t)val);
                 break;
             case 4:
                 *(uint32_t*)(gpu->vram_ptr + addr) = val;
-                // qemu_log("[DEVICE]: VRAM write dword: 0x%lx <- 0x%08x\n", addr, (uint32_t)val);
                 break;
             case 8:
                 *(uint64_t*)(gpu->vram_ptr + addr) = val;
-                // qemu_log("[DEVICE]: VRAM write qword: 0x%016lx -> 0x%016lx\n", addr, val);
                 break;
         }
     } else {

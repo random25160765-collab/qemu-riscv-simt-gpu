@@ -15,7 +15,7 @@ LIB_OUT     := $(DESTDIR)libsimx.a
 
 CXX      ?= g++
 AR       ?= ar
-CXXFLAGS := -std=c++17 -O2 -fPIC -DNDEBUG
+CXXFLAGS := -std=c++17 -O0 -g -fPIC -DNDEBUG -DSIMX_DEBUG_ENABLE
 CXXFLAGS += -Wno-unused-parameter -Wno-missing-field-initializers
 
 # --- include 路径 ---
@@ -36,7 +36,8 @@ COMMON_SRCS := \
     $(COMMON_DIR)/util.cpp \
     $(COMMON_DIR)/mem.cpp \
     $(COMMON_DIR)/softfloat_ext.cpp \
-    $(COMMON_DIR)/rvfloats.cpp
+    $(COMMON_DIR)/rvfloats.cpp \
+    $(COMMON_DIR)/simx_log.cpp
 
 # simx 核心（排除 main.cpp / VortexGPGPU.cpp / tensor_unit / vec_unit / voperands / vopc）
 SIMX_SRCS := \

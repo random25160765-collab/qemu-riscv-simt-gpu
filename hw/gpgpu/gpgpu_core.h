@@ -6,7 +6,7 @@
  * This work is licensed under the terms of the GNU GPL, version 2 or later.
  * See the COPYING file in the top-level directory.
  *
- * 简化的 RV32I 指令解释器，用于 GPU 核心模拟。
+ * 简化的 RV32IMF 指令解释器，用于 GPU 核心模拟。
  * 参考 NEMU 的设计思想，但独立实现。
  */
 
