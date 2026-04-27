@@ -28,7 +28,7 @@
 #define VRAM_SIZE       (64 * 1024 * 1024)
 #define N               4   /* 测试元素数 = block_dim.x */
 
-#define KERNEL_OFFSET   0x000000
+#define KERNEL_OFFSET   0x010000
 #define A_OFFSET        0x100000
 #define B_OFFSET        0x200000
 #define C_OFFSET        0x300000

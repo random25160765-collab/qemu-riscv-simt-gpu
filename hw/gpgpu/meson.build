@@ -18,7 +18,7 @@ libsimx = custom_target('libsimx',
     'DESTDIR=' + meson.current_build_dir() + '/',
   ],
   build_by_default: false,
-  build_always_stale: false,
+  build_always_stale: true,
 )
 
 # bridge 的 include 路径

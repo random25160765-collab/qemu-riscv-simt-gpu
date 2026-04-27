@@ -563,7 +563,6 @@ static void gpgpu_dma_complete(void *opaque)
     GPGPU_DEV("[DEVICE]: DMA completion handler finished\n");
 }
 
-/* TODO: Implement kernel completion handler */
 static void gpgpu_kernel_complete(void *opaque)
 {
     GPGPUState *s = GPGPU(opaque);
@@ -574,7 +573,8 @@ static void gpgpu_kernel_complete(void *opaque)
     int ret;
     if (s->backend_select & 0x1) {
         ret = vx_bridge_run((VxBridgeHandle *)s->simx_handle,
-                            s->vram_ptr, s->vram_size, s->kernel.kernel_addr);
+                            s->vram_ptr, s->vram_size, s->kernel.kernel_addr,
+                            s->kernel.grid_dim, s->kernel.block_dim);
     } else {
         ret = gpgpu_core_exec_kernel(s);
     }

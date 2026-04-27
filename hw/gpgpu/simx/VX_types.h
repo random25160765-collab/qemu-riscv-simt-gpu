@@ -4,15 +4,24 @@
 
 #include <stdint.h>
 
-// ---- DCR 地址 ----
+// ------- DCR 地址 ------
 #define VX_DCR_ADDR_BITS                12
+// -----------------------
 #define VX_DCR_BASE_STATE_BEGIN         0x001
 #define VX_DCR_BASE_STARTUP_ADDR0       0x001
 #define VX_DCR_BASE_STARTUP_ADDR1       0x002
 #define VX_DCR_BASE_STARTUP_ARG0        0x003
 #define VX_DCR_BASE_STARTUP_ARG1        0x004
 #define VX_DCR_BASE_MPM_CLASS           0x005
-#define VX_DCR_BASE_STATE_END           0x006
+// --- Kernel 启动参数 ----
+#define VX_DCR_BLOCK_DIM_X              0x006
+#define VX_DCR_BLOCK_DIM_Y              0x007
+#define VX_DCR_BLOCK_DIM_Z              0x008
+#define VX_DCR_GRID_DIM_X               0x009
+#define VX_DCR_GRID_DIM_Y               0x00A
+#define VX_DCR_GRID_DIM_Z               0x00B
+// -----------------------
+#define VX_DCR_BASE_STATE_END           0x00C
 #define VX_DCR_BASE_STATE(addr)         ((addr) - VX_DCR_BASE_STATE_BEGIN)
 #define VX_DCR_BASE_STATE_COUNT         (VX_DCR_BASE_STATE_END - VX_DCR_BASE_STATE_BEGIN)
 #define VX_DCR_MPM_CLASS_NONE           0
@@ -21,6 +30,7 @@
 
 // ---- CSR 地址 ----
 #define VX_CSR_ADDR_BITS                12
+// ------------------
 #define VX_CSR_FFLAGS                   0x001
 #define VX_CSR_FRM                      0x002
 #define VX_CSR_FCSR                     0x003

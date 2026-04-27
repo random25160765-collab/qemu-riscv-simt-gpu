@@ -115,13 +115,11 @@
 // DCACHE_CHANNELS  = UP((4*8)/32) = 1
 // DCACHE_NUM_REQS  = NUM_LSU_BLOCKS * DCACHE_CHANNELS = 1
 // L1_MEM_PORTS = MIN(DCACHE_NUM_REQS, PLATFORM_MEMORY_NUM_BANKS) = MIN(1,2) = 1
-#define L1_DISABLE
 #define L1_MEM_PORTS    1
 
-// I-Cache（禁用）
-#define ICACHE_DISABLE
-#define NUM_ICACHES     0
-#define ICACHE_ENABLED  0
+// I-Cache
+#define NUM_ICACHES     1
+#define ICACHE_ENABLED  1
 #define ICACHE_SIZE     8192
 #define ICACHE_NUM_WAYS 2
 #define ICACHE_CRSQ_SIZE 2
@@ -131,10 +129,9 @@
 #define ICACHE_MEM_PORTS 1
 #define ICACHE_REPL_POLICY 0
 
-// D-Cache（禁用）
-#define DCACHE_DISABLE
-#define NUM_DCACHES     0
-#define DCACHE_ENABLED  0
+// D-Cache
+#define NUM_DCACHES     1
+#define DCACHE_ENABLED  1
 #define DCACHE_SIZE     8192
 #define DCACHE_NUM_WAYS 2
 #define DCACHE_CRSQ_SIZE 2
@@ -154,8 +151,8 @@
 // GBAR（启用）
 #define GBAR_ENABLED    1
 
-// L2（禁用）
-#define L2_ENABLED      0
+// L2
+#define L2_ENABLED      1
 #define L2_CACHE_SIZE   131072
 #define L2_NUM_BANKS    2
 #define L2_NUM_WAYS     4
@@ -168,8 +165,8 @@
 #define L2_REPL_POLICY  1
 #define L2_MEM_PORTS    MIN(L2_NUM_BANKS, PLATFORM_MEMORY_NUM_BANKS)
 
-// L3（禁用）
-#define L3_ENABLED      0
+// L3
+#define L3_ENABLED      1
 #define L3_CACHE_SIZE   2097152
 #define L3_NUM_BANKS    2
 #define L3_NUM_WAYS     8

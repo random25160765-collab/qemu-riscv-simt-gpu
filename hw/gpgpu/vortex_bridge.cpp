@@ -72,11 +72,6 @@ static void simx_log_register(void)
  * ---------------------------------------------------------------------------
  */
 
-/*
- * VRAM 在 SimX 地址空间的基地址。
- * QTest kernel 直接用小地址（0x0 = 代码, 0x1000 = 数据），
- * IO 区域只有 0x40~0x7f，不冲突，直接从 0 映射。
- */
 static const uint64_t VRAM_BASE      = 0;
 static const uint64_t SIMX_RAM_SIZE  = 64 * 1024 * 1024;  // 64 MB，匹配 GPGPU VRAM
 
@@ -126,15 +121,20 @@ vx_bridge_destroy(VxBridgeHandle *h)
     delete h;
 }
 
+// 函数签名改为接收 block_dim[3]
 extern "C" int
 vx_bridge_run(VxBridgeHandle *h,
               const uint8_t  *vram,
               uint64_t        vram_size,
-              uint64_t        kernel_addr)
+              uint64_t        kernel_addr,
+              const uint32_t  grid_dim[3],
+              const uint32_t  block_dim[3])
 {
     SIMX_LOG("[bridge] === vx_bridge_run entry ===");
-    SIMX_LOG("[bridge]   handle=%p, vram=%p, vram_size=%lu, kernel_addr=0x%lx",
-             h, vram, vram_size, kernel_addr);
+    SIMX_LOG("[bridge]   handle=%p, vram=%p, vram_size=%lu, kernel_addr=0x%lx, "
+             "block_dim=(%u,%u,%u)",
+             h, vram, vram_size, kernel_addr,
+             block_dim[0], block_dim[1], block_dim[2]);
 
     /* 写入 VRAM 到 SimX RAM */
     h->ram.write(vram, VRAM_BASE, vram_size);
@@ -145,7 +145,21 @@ vx_bridge_run(VxBridgeHandle *h,
     uint64_t startup = VRAM_BASE + kernel_addr;
     h->proc.dcr_write(VX_DCR_BASE_STARTUP_ADDR0, (uint32_t)(startup & 0xffffffffULL));
     h->proc.dcr_write(VX_DCR_BASE_STARTUP_ADDR1, (uint32_t)(startup >> 32));
-    SIMX_LOG("[bridge] startup addr=0x%lx, entering Processor::run()", startup);
+    SIMX_LOG("[bridge] startup addr=0x%lx", startup);
+
+    /* 写入 block 维度 */
+    h->proc.dcr_write(VX_DCR_BLOCK_DIM_X, block_dim[0]);
+    h->proc.dcr_write(VX_DCR_BLOCK_DIM_Y, block_dim[1]);
+    h->proc.dcr_write(VX_DCR_BLOCK_DIM_Z, block_dim[2]);
+
+    /* 写入 grid 维度（为未来多 block 调度预留） */
+    h->proc.dcr_write(VX_DCR_GRID_DIM_X, grid_dim[0]);
+    h->proc.dcr_write(VX_DCR_GRID_DIM_Y, grid_dim[1]);
+    h->proc.dcr_write(VX_DCR_GRID_DIM_Z, grid_dim[2]);
+
+    SIMX_LOG("[bridge] grid_dim=(%u,%u,%u) block_dim=(%u,%u,%u)",
+             grid_dim[0], grid_dim[1], grid_dim[2],
+             block_dim[0], block_dim[1], block_dim[2]);
 
     /* 执行 */
     int exitcode = h->proc.run();
@@ -155,7 +169,7 @@ vx_bridge_run(VxBridgeHandle *h,
     h->ram.read(const_cast<uint8_t *>(vram), VRAM_BASE, vram_size);
     SIMX_LOG("[bridge] RAM read back done: %lu bytes", vram_size);
 
-    /* 重建 Processor，准备下次执行 */
+    /* 重建 Processor，保证每次执行的独立性 */
     h->proc.~Processor();
     new (&h->proc) Processor(h->arch);
     h->proc.attach_ram(&h->ram);

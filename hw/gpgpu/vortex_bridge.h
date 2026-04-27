@@ -26,9 +26,11 @@ void vx_bridge_destroy(VxBridgeHandle *h);
  * 返回 0 表示成功，非零表示 kernel 返回了非零 exitcode。
  */
 int vx_bridge_run(VxBridgeHandle *h,
-                  const uint8_t *vram,
-                  uint64_t       vram_size,
-                  uint64_t       kernel_addr);
+                  const uint8_t  *vram,
+                  uint64_t        vram_size,
+                  uint64_t        kernel_addr,
+                  const uint32_t  grid_dim[3],
+                  const uint32_t  block_dim[3]);
 
 #ifdef __cplusplus
 }
