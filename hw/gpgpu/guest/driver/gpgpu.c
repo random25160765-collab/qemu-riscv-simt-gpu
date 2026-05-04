@@ -209,7 +209,6 @@ static long gpgpu_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 
     case GPGPU_IOCTL_WAIT_KERNEL:
         if (gdev->irq_enabled) {
-            // 有中断支持：等待中断唤醒，或超时（5秒）
             ret = wait_event_interruptible_timeout(gdev->kernel_wq,
                                                    gdev->kernel_completed || gdev->error_occurred,
                                                    5 * HZ);
@@ -222,16 +221,14 @@ static long gpgpu_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
                 return -ERESTARTSYS;
             }
         } else {
-            // 无中断支持：轮询模式
-            int timeout = 5000000;  // 5秒超时（微秒）
-            while (timeout-- > 0) {
+            int timeout;
+            for (timeout = 5000000; timeout > 0; timeout--) {
                 status = gpgpu_readl(gdev, GPGPU_REG_GLOBAL_STATUS);
-                if (!(status & GPGPU_STATUS_BUSY)) {
+                if (!(status & GPGPU_STATUS_BUSY))
                     break;
-                }
-                udelay(1);  // 等待1微秒
+                udelay(1);
             }
-            if (timeout <= 0) {
+            if (timeout == 0) {
                 dev_err(&gdev->pdev->dev, "Kernel poll timeout\n");
                 return -ETIMEDOUT;
             }
