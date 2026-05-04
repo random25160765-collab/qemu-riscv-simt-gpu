@@ -111,6 +111,11 @@ int conflux_device_init(conflux_device_t *dev,
     CONFLUX_INFO("[DEVICE] HAL ready (mode=%s)\n",
                 mode == CONFLUX_HAL_MODE_IOCTL ? "ioctl" : "sim");
 
+    /* IOCTL 模式默认切换到 SimX 后端（builtin 已移除） */
+    if (mode == CONFLUX_HAL_MODE_IOCTL) {
+        conflux_hal_select_backend(&dev->hal, CONFLUX_BACKEND_SIMX);
+    }
+
     dev->mmio_base = mmio_base;
     dev->mmio_size = mmio_size;
 
