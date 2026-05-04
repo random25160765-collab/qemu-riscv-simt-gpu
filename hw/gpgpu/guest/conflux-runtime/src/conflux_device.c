@@ -115,10 +115,10 @@ int conflux_device_init(conflux_device_t *dev,
     dev->mmio_size = mmio_size;
 
     /* 初始化显存分配器
-     * DMA ioctl 的 dst_addr 是 VRAM 内偏移（从 0 开始），不是物理地址 */
+     * base_addr 从 block_size 起，跳过偏移 0（NULL 保留值，防止 PoCL 误判未分配）*/
     int ret = conflux_allocator_init(&dev->allocator,
-                                     0,                 /* VRAM 偏移从 0 起 */
-                                     dev->global_mem_size,
+                                     dev->mem_block_size,
+                                     dev->global_mem_size - dev->mem_block_size,
                                      dev->mem_block_size);
     if (ret != 0) {
         CONFLUX_ERROR("[DEVICE] Allocator init failed\n");
@@ -189,8 +189,8 @@ int conflux_device_reset(conflux_device_t *dev)
     /* 重新初始化分配器 */
     conflux_allocator_destroy(&dev->allocator);
     int ret = conflux_allocator_init(&dev->allocator,
-                                     0,
-                                     dev->global_mem_size,
+                                     dev->mem_block_size,
+                                     dev->global_mem_size - dev->mem_block_size,
                                      dev->mem_block_size);
     if (ret != 0) {
         dev->flags |= CONFLUX_DEV_FLAG_ERROR;
