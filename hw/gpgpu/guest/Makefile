@@ -90,6 +90,18 @@ cross-runtime-install:
 	sudo ldconfig
 	@echo "Installed libconflux (riscv64) to /usr/local"
 
+# 在 guest 里执行：把 cross-pocl-stage 产物装到 /usr/local
+# 用法（guest 里）：make cross-pocl-install
+POCL_INSTALL_STAGE = $(CURDIR)/pocl-install-riscv
+cross-pocl-install:
+	@if [ ! -d "$(POCL_INSTALL_STAGE)/usr/local" ]; then \
+		echo "ERROR: $(POCL_INSTALL_STAGE) 不存在，先在 host 跑 make cross-pocl-stage"; \
+		exit 1; \
+	fi
+	sudo cp -rL $(POCL_INSTALL_STAGE)/usr/local/. /usr/local/
+	sudo ldconfig
+	@echo "Installed PoCL (riscv64) to /usr/local"
+
 # ============================================================
 # 3. PoCL（OpenCL 框架 + Conflux 桥接）
 # ============================================================
@@ -172,6 +184,38 @@ clean-pocl:
 	@echo "  CLEAN    pocl"
 
 # ============================================================
+# 开发快捷目标
+# ============================================================
+#
+# Host 端（x86，交叉编译）：
+#   make dev-runtime   只重编 runtime（改 conflux-runtime/src/ 后用，快）
+#   make dev           重编 runtime + pocl + stage（完整重建，慢）
+#
+# Guest 端（RISC-V，部署+测试）：
+#   make deploy        insmod 驱动 + 安装 runtime + 安装 pocl（首次或全量更新）
+#   make deploy-runtime  只重装 runtime（改 runtime 后快速更新）
+
+# Host: 只重编 runtime
+dev-runtime:
+	@$(MAKE) cross-runtime
+
+# Host: 重编 runtime + pocl + stage
+dev:
+	@$(MAKE) cross-runtime
+	@$(MAKE) cross-pocl
+	@$(MAKE) cross-pocl-stage
+	@echo "=== cross build + stage done ==="
+	@echo "    on guest: make deploy"
+
+# Guest: 全量部署（驱动 + runtime + pocl）
+deploy: install cross-runtime-install cross-pocl-install
+	@echo "=== deploy done ==="
+
+# Guest: 只更新 runtime（改 runtime 后快速 reload）
+deploy-runtime: cross-runtime-install
+	@echo "=== runtime deployed ==="
+
+# ============================================================
 # 一口气
 # ============================================================
 
@@ -182,32 +226,35 @@ clean: clean-driver clean-runtime clean-pocl
 	@echo "All cleaned."
 
 help:
-	@echo "Targets (在 guest 内运行):"
-	@echo "  driver               编译内核驱动 → bin/driver/gpgpu.ko"
-	@echo "  install              insmod 已编译的 gpgpu.ko"
-	@echo "  remove               rmmod gpgpu"
-	@echo "  status               查看 /dev/gpgpu* 和模块状态"
-	@echo "  runtime              native 编译 conflux-runtime"
-	@echo "  runtime-test         编译 + 跑全部回归测试（SIM）"
-	@echo "  runtime-install      安装 libconflux 到 /usr/local"
-	@echo "  pocl / pocl-install  cmake 配置编译 PoCL（含 conflux 设备）"
-	@echo "  all                  driver + runtime + pocl"
-	@echo "  clean                清理全部产物"
+	@echo "=== Host 端（x86，交叉编译） ==="
+	@echo "  make dev-runtime        只重编 runtime（改 conflux-runtime/src/ 后用，快）"
+	@echo "  make dev                重编 runtime + pocl + stage（完整重建）"
+	@echo "  make cross-runtime      编译 libconflux → build/riscv64-linux-gnu/"
+	@echo "  make cross-pocl         交叉编译 PoCL"
+	@echo "  make cross-pocl-stage   把 PoCL 安装到 pocl-install-riscv/"
 	@echo ""
-	@echo "Targets (在 host 上跑，给 RISC-V guest 交叉编译):"
-	@echo "  cross-runtime        编译 libconflux → build/riscv64-linux-gnu/"
-	@echo "  cross-runtime-build  同上 + 测试可执行文件（不跑）"
-	@echo "  cross-pocl           交叉编译 PoCL（需先做 LLVM sysroot 准备，见 README）"
+	@echo "=== Guest 端（RISC-V，部署+测试） ==="
+	@echo "  make deploy             全量部署：驱动 + runtime + pocl"
+	@echo "  make deploy-runtime     只重装 runtime（改 runtime 后快速更新）"
+	@echo "  make install            insmod gpgpu.ko + chmod /dev/gpgpu0"
+	@echo "  make remove             rmmod gpgpu"
+	@echo "  make status             查看 /dev/gpgpu* 和模块状态"
+	@echo "  make cross-runtime-install  安装交叉编译的 libconflux"
+	@echo "  make cross-pocl-install     安装交叉编译的 PoCL"
+	@echo "  make runtime-test       native 编译 + 跑 SIM 回归测试"
 	@echo ""
-	@echo "Targets (在 guest 里执行，安装交叉编译产物):"
-	@echo "  cross-runtime-install  把 host 交叉编译的 libconflux 装到 /usr/local"
+	@echo "=== 其他 ==="
+	@echo "  make driver             编译内核驱动 → bin/driver/gpgpu.ko"
+	@echo "  make all                driver + runtime + pocl（guest native）"
+	@echo "  make clean              清理全部产物"
 	@echo ""
 	@echo "Variables:"
-	@echo "  CROSS_COMPILE        工具链前缀（e.g. riscv64-linux-gnu-）"
-	@echo "  RISCV_CROSS          内置默认值: $(RISCV_CROSS)"
+	@echo "  RISCV_CROSS             工具链前缀，默认: $(RISCV_CROSS)"
 
 .PHONY: driver clean-driver \
         runtime runtime-test runtime-install clean-runtime \
         cross-runtime cross-runtime-build cross-runtime-install \
-        pocl pocl-install cross-pocl clean-pocl \
+        cross-pocl-install \
+        pocl pocl-install cross-pocl cross-pocl-stage clean-pocl \
+        dev dev-runtime deploy deploy-runtime \
         all clean help
