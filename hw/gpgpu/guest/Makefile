@@ -215,6 +215,18 @@ deploy: install cross-runtime-install cross-pocl-install
 deploy-runtime: cross-runtime-install
 	@echo "=== runtime deployed ==="
 
+# Guest: 运行 OpenCL buffer 读写测试
+test-ocl:
+	@$(MAKE) -C $(RUNTIME_DIR) test-ocl-run
+
+# Guest: 带 ASAN 跑 SIM 回归测试（检测内存问题）
+test-asan:
+	@$(MAKE) -C $(RUNTIME_DIR) CROSS_COMPILE=$(RISCV_CROSS) test-asan-run
+
+# Guest: 带 ASAN 跑 DMA 集成测试（需要 /dev/gpgpu0）
+test-dma-asan:
+	@$(MAKE) -C $(RUNTIME_DIR) CROSS_COMPILE=$(RISCV_CROSS) test-dma-asan
+
 # ============================================================
 # 一口气
 # ============================================================
@@ -257,4 +269,5 @@ help:
         cross-pocl-install \
         pocl pocl-install cross-pocl cross-pocl-stage clean-pocl \
         dev dev-runtime deploy deploy-runtime \
+        test-ocl test-asan test-dma-asan \
         all clean help

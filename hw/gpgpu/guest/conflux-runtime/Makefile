@@ -175,6 +175,83 @@ test-ocl: $(OCL_TEST_BIN)
 test-ocl-run: $(OCL_TEST_BIN)
 	POCL_DEVICES=gpgpu $(OCL_TEST_BIN)
 
+# === Sanitizer 构建（用于在 guest 上检测内存/线程问题）===
+# ASAN：检测 use-after-free、越界、泄漏
+#   make test-asan        编译 + 跑 SIM 回归测试（不需要驱动）
+#   make test-dma-asan    编译 + 跑 DMA 集成测试（需要 /dev/gpgpu0）
+#
+# 注意：TSAN（线程分析）目前 RISC-V 工具链没有 libtsan，暂不支持。
+#       如需 TSAN，在 x86 host 上用 native 编译的 mock 版本跑。
+
+ASAN_DIR     = $(BUILD_DIR)-asan
+ASAN_FLAGS   = -fsanitize=address -fno-omit-frame-pointer -g -O1
+ASAN_SRCS    = $(SRCS)
+ASAN_OBJS    = $(patsubst $(SRC_DIR)/%.c,$(ASAN_DIR)/%.o,$(ASAN_SRCS))
+ASAN_LIB_A   = $(ASAN_DIR)/libconflux.a
+ASAN_TEST_BINS = $(patsubst $(TEST_DIR)/%.c,$(ASAN_DIR)/%,$(TEST_SRCS))
+ASAN_DMA_BIN   = $(ASAN_DIR)/test_dma
+
+$(ASAN_DIR)/%.o: $(SRC_DIR)/%.c
+	@mkdir -p $(ASAN_DIR)
+	@echo "  CC[asan] $<"
+	@$(CC) $(CFLAGS) $(ASAN_FLAGS) -c $< -o $@
+
+$(ASAN_LIB_A): $(ASAN_OBJS)
+	@echo "  AR[asan] $(notdir $@)"
+	@$(AR) rcs $@ $^
+
+$(ASAN_DIR)/%: $(TEST_DIR)/%.c $(ASAN_LIB_A)
+	@mkdir -p $(ASAN_DIR)
+	@echo "  TEST[asan] $(notdir $@)"
+	@$(CC) $(CFLAGS) $(ASAN_FLAGS) $< $(ASAN_LIB_A) -o $@ $(LDFLAGS)
+
+$(ASAN_DMA_BIN): $(TEST_DIR)/test_dma.c $(ASAN_LIB_A)
+	@mkdir -p $(ASAN_DIR)
+	@echo "  TEST[asan] test_dma"
+	@$(CC) $(CFLAGS) $(ASAN_FLAGS) $< $(ASAN_LIB_A) -o $@ $(LDFLAGS)
+
+test-asan: $(ASAN_TEST_BINS)
+ifeq ($(CAN_RUN),1)
+	@PASS=0; FAIL=0; \
+	for t in $(ASAN_TEST_BINS); do \
+		name=$$(basename $$t); \
+		if ASAN_OPTIONS=detect_leaks=1 timeout 30 $$t > $(ASAN_DIR)/$$name.out 2>&1 && \
+		   grep -qiE "all (tests |phases |quality tests )?passed" $(ASAN_DIR)/$$name.out; then \
+			echo "  PASS   $$name (asan)"; \
+			PASS=$$((PASS+1)); \
+		else \
+			echo "  FAIL   $$name (asan)"; \
+			cat $(ASAN_DIR)/$$name.out; \
+			FAIL=$$((FAIL+1)); \
+		fi; \
+	done; \
+	echo "--- $$PASS / $$((PASS+FAIL)) tests passing (asan) ---"; \
+	test $$FAIL -eq 0
+else
+	@echo "  cross build — run on guest: make test-asan-run"
+endif
+
+test-asan-run:
+	@PASS=0; FAIL=0; \
+	for t in $(ASAN_TEST_BINS); do \
+		name=$$(basename $$t); \
+		[ -x $$t ] || { echo "  MISS   $$name"; FAIL=$$((FAIL+1)); continue; }; \
+		if ASAN_OPTIONS=detect_leaks=1 timeout 30 $$t > $(ASAN_DIR)/$$name.out 2>&1 && \
+		   grep -qiE "all (tests |phases |quality tests )?passed" $(ASAN_DIR)/$$name.out; then \
+			echo "  PASS   $$name (asan)"; \
+			PASS=$$((PASS+1)); \
+		else \
+			echo "  FAIL   $$name (asan)"; \
+			cat $(ASAN_DIR)/$$name.out; \
+			FAIL=$$((FAIL+1)); \
+		fi; \
+	done; \
+	echo "--- $$PASS / $$((PASS+FAIL)) tests passing (asan) ---"; \
+	test $$FAIL -eq 0
+
+test-dma-asan: $(ASAN_DMA_BIN)
+	ASAN_OPTIONS=detect_leaks=1 $(ASAN_DMA_BIN)
+
 # === 安装 ===
 install: $(LIB_A) $(LIB_SO)
 	install -d $(DESTDIR)$(PREFIX)/lib
@@ -188,4 +265,6 @@ clean:
 	@echo "  CLEAN  conflux-runtime (all triples)"
 
 .PHONY: all test test-build test-run perf test-device test-device-run \
-        test-ocl test-ocl-run install clean
+        test-ocl test-ocl-run \
+        test-asan test-asan-run test-dma-asan \
+        install clean
