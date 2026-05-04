@@ -159,6 +159,22 @@ test-device: $(DMA_TEST_BIN)
 test-device-run: $(DMA_TEST_BIN)
 	LD_LIBRARY_PATH=$(BUILD_DIR) $(DMA_TEST_BIN)
 
+# OpenCL 集成测试：需要 PoCL 已安装（/usr/local/lib/libpocl.so + ICD loader）
+# 在 guest 上运行：make test-ocl-run
+OCL_CFLAGS  = $(CFLAGS) -I/usr/local/include
+OCL_LDFLAGS = -lOpenCL -Wl,-rpath,/usr/local/lib
+
+$(OCL_TEST_BIN): $(TEST_DIR)/test_ocl_mem.c
+	@mkdir -p $(BUILD_DIR)
+	@echo "  TEST   test_ocl_mem"
+	@$(CC) $(OCL_CFLAGS) $< -o $@ $(OCL_LDFLAGS)
+
+test-ocl: $(OCL_TEST_BIN)
+	@echo "  built $(OCL_TEST_BIN)"
+
+test-ocl-run: $(OCL_TEST_BIN)
+	POCL_DEVICES=gpgpu $(OCL_TEST_BIN)
+
 # === 安装 ===
 install: $(LIB_A) $(LIB_SO)
 	install -d $(DESTDIR)$(PREFIX)/lib
@@ -171,4 +187,5 @@ clean:
 	@rm -rf build
 	@echo "  CLEAN  conflux-runtime (all triples)"
 
-.PHONY: all test test-build test-run perf test-device test-device-run install clean
+.PHONY: all test test-build test-run perf test-device test-device-run \
+        test-ocl test-ocl-run install clean
