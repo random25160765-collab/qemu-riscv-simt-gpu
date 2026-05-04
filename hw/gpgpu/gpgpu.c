@@ -728,8 +728,10 @@ static void gpgpu_realize(PCIDevice *pdev, Error **errp)
     GPGPU_DEV("[DEVICE]: GPGPU device realization completed successfully\n");
     GPGPU_DEV("[DEVICE]: Device status set to READY\n");
 
+    /* builtin 解释器已移除，默认使用 SimX 后端 */
+    s->backend_select = GPGPU_BACKEND_SIMX;
+
     /* 初始化 SimX 后端句柄 */
-    /* 默认创建，后续根据后端选择寄存器判断是否使用 */
     s->simx_handle = vx_bridge_create(s->num_cus, s->warps_per_cu, s->warp_size);
 
     if (!s->simx_handle) {
