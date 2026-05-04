@@ -67,6 +67,10 @@ TEST_BINS = $(patsubst $(TEST_DIR)/%.c,$(BUILD_DIR)/%,$(TEST_SRCS))
 PERF_SRCS = $(wildcard $(TEST_DIR)/test_perf*.c)
 PERF_BINS = $(patsubst $(TEST_DIR)/%.c,$(BUILD_DIR)/%,$(PERF_SRCS))
 
+# 设备集成测试（需要真实驱动，在 guest 上跑）
+DMA_TEST_BIN = $(BUILD_DIR)/test_dma
+OCL_TEST_BIN = $(BUILD_DIR)/test_ocl_mem
+
 all: $(LIB_A) $(LIB_SO)
 	@echo "  built  $(BUILD_DIR)  (target=$(TARGET_TRIPLE))"
 
@@ -142,6 +146,19 @@ else
 	@echo "perf: cross build, run on target"
 endif
 
+# 设备集成测试：需要真实驱动 + /dev/gpgpu0，在 guest 上手动跑
+$(DMA_TEST_BIN): $(TEST_DIR)/test_dma.c $(LIB_A)
+	@mkdir -p $(BUILD_DIR)
+	@echo "  TEST   test_dma"
+	@$(CC) $(CFLAGS) $< $(LIB_A) -o $@ $(LDFLAGS)
+
+test-device: $(DMA_TEST_BIN)
+	@echo "  built $(DMA_TEST_BIN)"
+	@echo "  run on guest:  LD_LIBRARY_PATH=$(BUILD_DIR) $(DMA_TEST_BIN)"
+
+test-device-run: $(DMA_TEST_BIN)
+	LD_LIBRARY_PATH=$(BUILD_DIR) $(DMA_TEST_BIN)
+
 # === 安装 ===
 install: $(LIB_A) $(LIB_SO)
 	install -d $(DESTDIR)$(PREFIX)/lib
@@ -154,4 +171,4 @@ clean:
 	@rm -rf build
 	@echo "  CLEAN  conflux-runtime (all triples)"
 
-.PHONY: all test test-build test-run perf install clean
+.PHONY: all test test-build test-run perf test-device test-device-run install clean

@@ -80,6 +80,16 @@ cross-runtime:
 cross-runtime-build:
 	@$(MAKE) -C $(RUNTIME_DIR) test-build CROSS_COMPILE=$(RISCV_CROSS)
 
+# 在 guest 里执行：把 host 交叉编译产物安装到 /usr/local/lib
+# 用法（guest 里）：make cross-runtime-install
+cross-runtime-install:
+	sudo install -m 644 $(RUNTIME_DIR)/build/riscv64-linux-gnu/libconflux.a /usr/local/lib/
+	sudo install -m 755 $(RUNTIME_DIR)/build/riscv64-linux-gnu/libconflux.so /usr/local/lib/
+	sudo install -d /usr/local/include/conflux
+	sudo install -m 644 $(RUNTIME_DIR)/include/*.h /usr/local/include/conflux/
+	sudo ldconfig
+	@echo "Installed libconflux (riscv64) to /usr/local"
+
 # ============================================================
 # 3. PoCL（OpenCL 框架 + Conflux 桥接）
 # ============================================================
@@ -101,6 +111,10 @@ RISCV_LLVM_DIR     = /usr/riscv64-linux-gnu/lib/llvm-18/lib/cmake/llvm
 POCL_CMAKE_OPTS = \
     -DENABLE_GPGPU=ON \
     -DENABLE_ICD=ON \
+    -DHAVE_OCL_ICD=1 \
+    -DHAVE_OCL_ICD_30_COMPATIBLE=1 \
+    -DOCL_ICD_INCLUDE_DIRS=/usr/riscv64-linux-gnu/include \
+    -DOCL_ICD_LIBRARIES=/usr/riscv64-linux-gnu/lib/libOpenCL.so \
     -DENABLE_HOST_CPU_DEVICES=OFF \
     -DENABLE_LOADABLE_DRIVERS=OFF \
     -DHAVE_DLFCN_H=ON \
@@ -185,12 +199,15 @@ help:
 	@echo "  cross-runtime-build  同上 + 测试可执行文件（不跑）"
 	@echo "  cross-pocl           交叉编译 PoCL（需先做 LLVM sysroot 准备，见 README）"
 	@echo ""
+	@echo "Targets (在 guest 里执行，安装交叉编译产物):"
+	@echo "  cross-runtime-install  把 host 交叉编译的 libconflux 装到 /usr/local"
+	@echo ""
 	@echo "Variables:"
 	@echo "  CROSS_COMPILE        工具链前缀（e.g. riscv64-linux-gnu-）"
 	@echo "  RISCV_CROSS          内置默认值: $(RISCV_CROSS)"
 
 .PHONY: driver clean-driver \
         runtime runtime-test runtime-install clean-runtime \
-        cross-runtime cross-runtime-build \
+        cross-runtime cross-runtime-build cross-runtime-install \
         pocl pocl-install cross-pocl clean-pocl \
         all clean help
