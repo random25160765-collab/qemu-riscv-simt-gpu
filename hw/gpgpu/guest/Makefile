@@ -219,6 +219,10 @@ deploy-runtime: cross-runtime-install
 test-ocl:
 	@$(MAKE) -C $(RUNTIME_DIR) test-ocl-run
 
+# Guest: 运行 vector_add kernel dispatch 端到端测试
+test-kernel:
+	@$(MAKE) -C $(RUNTIME_DIR) test-kernel-run
+
 # Guest: 带 ASAN 跑 SIM 回归测试（检测内存问题）
 test-asan:
 	@$(MAKE) -C $(RUNTIME_DIR) CROSS_COMPILE=$(RISCV_CROSS) test-asan-run
@@ -269,5 +273,5 @@ help:
         cross-pocl-install \
         pocl pocl-install cross-pocl cross-pocl-stage clean-pocl \
         dev dev-runtime deploy deploy-runtime \
-        test-ocl test-asan test-dma-asan \
+        test-ocl test-kernel test-asan test-dma-asan \
         all clean help

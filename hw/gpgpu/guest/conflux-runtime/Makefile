@@ -164,9 +164,16 @@ test-device-run: $(DMA_TEST_BIN)
 OCL_CFLAGS  = $(CFLAGS) -I/usr/local/include
 OCL_LDFLAGS = -lOpenCL -Wl,-rpath,/usr/local/lib
 
+KERNEL_LAUNCH_BIN = $(BUILD_DIR)/test_kernel_launch
+
 $(OCL_TEST_BIN): $(TEST_DIR)/test_ocl_mem.c
 	@mkdir -p $(BUILD_DIR)
 	@echo "  TEST   test_ocl_mem"
+	@$(CC) $(OCL_CFLAGS) $< -o $@ $(OCL_LDFLAGS)
+
+$(KERNEL_LAUNCH_BIN): $(TEST_DIR)/test_kernel_launch.c
+	@mkdir -p $(BUILD_DIR)
+	@echo "  TEST   test_kernel_launch"
 	@$(CC) $(OCL_CFLAGS) $< -o $@ $(OCL_LDFLAGS)
 
 test-ocl: $(OCL_TEST_BIN)
@@ -174,6 +181,12 @@ test-ocl: $(OCL_TEST_BIN)
 
 test-ocl-run: $(OCL_TEST_BIN)
 	POCL_DEVICES=gpgpu $(OCL_TEST_BIN)
+
+test-kernel: $(KERNEL_LAUNCH_BIN)
+	@echo "  built $(KERNEL_LAUNCH_BIN)"
+
+test-kernel-run: $(KERNEL_LAUNCH_BIN)
+	POCL_DEVICES=gpgpu $(KERNEL_LAUNCH_BIN)
 
 # === Sanitizer 构建（用于在 guest 上检测内存/线程问题）===
 # ASAN：检测 use-after-free、越界、泄漏
@@ -265,6 +278,6 @@ clean:
 	@echo "  CLEAN  conflux-runtime (all triples)"
 
 .PHONY: all test test-build test-run perf test-device test-device-run \
-        test-ocl test-ocl-run \
+        test-ocl test-ocl-run test-kernel test-kernel-run \
         test-asan test-asan-run test-dma-asan \
         install clean
