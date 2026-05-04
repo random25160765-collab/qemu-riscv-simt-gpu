@@ -4,6 +4,7 @@
 
 install: $(DRIVER_KO)
 	@sudo insmod $(DRIVER_KO)
+	@sudo chmod a+rw /dev/gpgpu0 2>/dev/null || true
 	@echo "Driver loaded."
 
 remove:
