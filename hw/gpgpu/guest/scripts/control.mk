@@ -3,6 +3,7 @@
 # !! Only use in guest
 
 install: $(DRIVER_KO)
+	@sudo rmmod gpgpu 2>/dev/null || true
 	@sudo insmod $(DRIVER_KO)
 	@sudo chmod a+rw /dev/gpgpu0 2>/dev/null || true
 	@echo "Driver loaded."
