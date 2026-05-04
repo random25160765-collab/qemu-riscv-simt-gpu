@@ -1,9 +1,15 @@
-bin
-/toolchain/include/
-/toolchain/lib/
-/toolchain/riscv64-linux-gnu/
-/toolchain/riscv-python-sysroot/
+bin/
+_riscv-llvm-stage/
+conflux-runtime/build/
+pocl/build/
+pocl/build-cross/
+pocl/build-riscv/
+pocl-install-riscv/
 
-!/toolchain/*.tar.gz
-!/toolchain/*.tgz
-!/toolchain/*.tar.bz2
+# 内核模块构建产物
+driver/*.ko
+driver/*.o
+driver/.*.cmd
+driver/Module.symvers
+driver/modules.order
+driver/.tmp_versions/

@@ -18,9 +18,9 @@
 #include "hw/pci/msix.h"
 #include "hw/core/qdev-properties.h"
 #include "migration/vmstate.h"
+#include "exec/cpu-common.h"
 
 #include "gpgpu.h"
-#include "gpgpu_core.h"
 #include "gpgpu_log.h"
 #include "vortex_bridge.h"
 
@@ -342,19 +342,35 @@ static void gpgpu_ctrl_write(void *opaque, hwaddr addr, uint64_t val,
                          dir ? "FROM_VRAM" : "TO_VRAM", src, dst, _size);
 
                 if (dir) {
-                    memcpy(gpu->vram_ptr + dst, gpu->vram_ptr + src, _size);
+                    /* FROM_VRAM: VRAM 偏移 src → guest 物理地址 dst */
+                    void *host_dst = cpu_physical_memory_map(dst, &(hwaddr){_size}, true);
+                    if (host_dst) {
+                        memcpy(host_dst, gpu->vram_ptr + src, _size);
+                        cpu_physical_memory_unmap(host_dst, _size, true, _size);
+                    } else {
+                        GPGPU_DEV("[DEVICE]: DMA FROM_VRAM: failed to map dst 0x%lx\n", dst);
+                    }
                 } else {
-                    memcpy(gpu->vram_ptr + dst, (void *)(uintptr_t)src, _size);
+                    /* TO_VRAM: guest 物理地址 src → VRAM 偏移 dst */
+                    void *host_src = cpu_physical_memory_map(src, &(hwaddr){_size}, false);
+                    if (host_src) {
+                        memcpy(gpu->vram_ptr + dst, host_src, _size);
+                        cpu_physical_memory_unmap(host_src, _size, false, _size);
+                    } else {
+                        GPGPU_DEV("[DEVICE]: DMA TO_VRAM: failed to map src 0x%lx\n", src);
+                    }
                 }
 
-                gpu->dma.ctrl |= GPGPU_DMA_BUSY;
+                /* 先保存 ctrl 值（含 IRQ_ENABLE 等标志位），再设置 BUSY */
+                gpu->dma.ctrl = val | GPGPU_DMA_BUSY;
                 gpu->dma.status = GPGPU_DMA_BUSY;
                 timer_mod_ns(gpu->dma_timer,
                              qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) + 1000 * 1000);
                 GPGPU_DEV("[DEVICE]: DMA transfer started, timer scheduled\n");
+            } else {
+                gpu->dma.ctrl = val;
             }
-            gpu->dma.ctrl = val;
-            GPGPU_DEV("[DEVICE]: DMA_CTRL set to 0x%x\n", (uint32_t)val);
+            GPGPU_DEV("[DEVICE]: DMA_CTRL set to 0x%x\n", (uint32_t)gpu->dma.ctrl);
             break;
         case GPGPU_REG_DMA_STATUS:
             GPGPU_DEV("[DEVICE]: DMA_STATUS write ignored (read-only)\n");
@@ -576,7 +592,9 @@ static void gpgpu_kernel_complete(void *opaque)
                             s->vram_ptr, s->vram_size, s->kernel.kernel_addr,
                             s->kernel.grid_dim, s->kernel.block_dim);
     } else {
-        ret = gpgpu_core_exec_kernel(s);
+        /* builtin 软件核心已移除，只支持 SimX 后端 */
+        GPGPU_DEV("[DEVICE]: builtin backend not available, use SimX backend\n");
+        ret = -1;
     }
 
     if (ret == 0) {

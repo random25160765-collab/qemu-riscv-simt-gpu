@@ -45,3 +45,6 @@
 [submodule "tests/lcitool/libvirt-ci"]
 	path = tests/lcitool/libvirt-ci
 	url = https://gitlab.com/libvirt/libvirt-ci.git
+[submodule "hw/gpgpu/guest/pocl"]
+	path = hw/gpgpu/guest/pocl
+	url = https://github.com/pocl/pocl.git

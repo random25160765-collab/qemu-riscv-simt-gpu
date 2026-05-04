@@ -268,11 +268,12 @@ static long gpgpu_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
         struct gpgpu_dma_params params;
         u32 dma_status;
         int timeout;
+        struct page *page = NULL;
+        dma_addr_t phys_addr;
 
         if (copy_from_user(&params, (void __user *)arg, sizeof(params)))
             return -EFAULT;
 
-        // 验证参数
         if (params.size == 0) {
             dev_err(&gdev->pdev->dev, "DMA transfer size cannot be zero\n");
             return -EINVAL;
@@ -284,77 +285,106 @@ static long gpgpu_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
             return -EINVAL;
         }
 
-        // 检查是否已有 DMA 在进行
         dma_status = gpgpu_readl(gdev, GPGPU_REG_DMA_STATUS);
         if (dma_status & GPGPU_DMA_BUSY) {
             dev_warn(&gdev->pdev->dev, "DMA already busy\n");
             return -EBUSY;
         }
 
-        dev_info(&gdev->pdev->dev, "DMA: src=0x%llx, dst=0x%llx, size=%u\n",
-                 params.src_addr, params.dst_addr, params.size);
+        /* 把用户态 buf 的虚拟地址翻译成物理地址（pin 住页） */
+        {
+            unsigned long uaddr;
+            bool to_device = !(params.flags & GPGPU_DMA_DIR_FROM_VRAM);
 
-        // 设置 DMA 参数
-        gpgpu_writel(gdev, GPGPU_REG_DMA_SRC_LO, lower_32_bits(params.src_addr));
-        gpgpu_writel(gdev, GPGPU_REG_DMA_SRC_HI, upper_32_bits(params.src_addr));
-        gpgpu_writel(gdev, GPGPU_REG_DMA_DST_LO, lower_32_bits(params.dst_addr));
-        gpgpu_writel(gdev, GPGPU_REG_DMA_DST_HI, upper_32_bits(params.dst_addr));
+            if (to_device) {
+                uaddr = (unsigned long)params.src_addr;
+            } else {
+                uaddr = (unsigned long)params.dst_addr;
+            }
+
+            ret = pin_user_pages_fast(uaddr & PAGE_MASK, 1,
+                                      to_device ? 0 : FOLL_WRITE,
+                                      &page);
+            if (ret != 1) {
+                dev_err(&gdev->pdev->dev, "Failed to pin user page: %d\n", ret);
+                return -EFAULT;
+            }
+
+            phys_addr = page_to_phys(page) + (uaddr & ~PAGE_MASK);
+        }
+
+        dev_info(&gdev->pdev->dev, "DMA: phys=0x%llx, vram=0x%llx, size=%u\n",
+                 (u64)phys_addr, params.flags & GPGPU_DMA_DIR_FROM_VRAM ?
+                 params.src_addr : params.dst_addr, params.size);
+
+        /* 写寄存器：host 侧用物理地址，VRAM 侧用偏移 */
+        if (params.flags & GPGPU_DMA_DIR_FROM_VRAM) {
+            gpgpu_writel(gdev, GPGPU_REG_DMA_SRC_LO, lower_32_bits(params.src_addr));
+            gpgpu_writel(gdev, GPGPU_REG_DMA_SRC_HI, upper_32_bits(params.src_addr));
+            gpgpu_writel(gdev, GPGPU_REG_DMA_DST_LO, lower_32_bits(phys_addr));
+            gpgpu_writel(gdev, GPGPU_REG_DMA_DST_HI, upper_32_bits(phys_addr));
+        } else {
+            gpgpu_writel(gdev, GPGPU_REG_DMA_SRC_LO, lower_32_bits(phys_addr));
+            gpgpu_writel(gdev, GPGPU_REG_DMA_SRC_HI, upper_32_bits(phys_addr));
+            gpgpu_writel(gdev, GPGPU_REG_DMA_DST_LO, lower_32_bits(params.dst_addr));
+            gpgpu_writel(gdev, GPGPU_REG_DMA_DST_HI, upper_32_bits(params.dst_addr));
+        }
         gpgpu_writel(gdev, GPGPU_REG_DMA_SIZE, params.size);
 
-        // 设置控制寄存器：启动 + 方向 + 中断使能
         u32 ctrl = GPGPU_DMA_START;
         if (params.flags & GPGPU_DMA_DIR_FROM_VRAM)
             ctrl |= GPGPU_DMA_DIR_FROM_VRAM;
-        if (params.flags & GPGPU_DMA_IRQ_ENABLE)
+        /* 中断不可用时不设 IRQ_ENABLE，走轮询 */
+        if ((params.flags & GPGPU_DMA_IRQ_ENABLE) && gdev->irq_enabled)
             ctrl |= GPGPU_DMA_IRQ_ENABLE;
 
         gdev->dma_in_progress = true;
         gpgpu_writel(gdev, GPGPU_REG_DMA_CTRL, ctrl);
 
-        // 如果启用了中断且有中断支持，等待中断完成
-        if ((ctrl & GPGPU_DMA_IRQ_ENABLE) && gdev->irq_enabled) {
+        if (gdev->irq_enabled && (ctrl & GPGPU_DMA_IRQ_ENABLE)) {
             ret = wait_event_interruptible_timeout(gdev->kernel_wq,
                                                    !gdev->dma_in_progress,
                                                    5 * HZ);
             if (ret == 0) {
                 dev_err(&gdev->pdev->dev, "DMA wait timeout\n");
                 gdev->dma_in_progress = false;
+                unpin_user_page(page);
                 return -ETIMEDOUT;
             }
             if (ret < 0) {
-                dev_err(&gdev->pdev->dev, "DMA wait interrupted: %d\n", ret);
                 gdev->dma_in_progress = false;
+                unpin_user_page(page);
                 return -ERESTARTSYS;
             }
         } else {
-            // 轮询等待完成（无中断支持或中断被禁用）
-            timeout = 1000000;  // 最多等待 1M 次
-            while (timeout-- > 0) {
+            /* 轮询等待 BUSY 清零 */
+            for (timeout = 1000000; timeout > 0; timeout--) {
                 dma_status = gpgpu_readl(gdev, GPGPU_REG_DMA_STATUS);
                 if (!(dma_status & GPGPU_DMA_BUSY))
                     break;
-                udelay(10);  // 等待10微秒
+                udelay(10);
             }
-            if (timeout <= 0) {
+            if (timeout == 0) {
                 dev_err(&gdev->pdev->dev, "DMA poll timeout\n");
                 gdev->dma_in_progress = false;
+                unpin_user_page(page);
                 return -ETIMEDOUT;
             }
         }
 
-        // 检查 DMA 错误
+        gdev->dma_in_progress = false;
+        unpin_user_page(page);
+
         dma_status = gpgpu_readl(gdev, GPGPU_REG_DMA_STATUS);
         if (dma_status & GPGPU_DMA_ERROR) {
-            dev_err(&gdev->pdev->dev, "DMA error occurred, status=0x%x\n", dma_status);
-            gdev->dma_in_progress = false;
+            dev_err(&gdev->pdev->dev, "DMA error, status=0x%x\n", dma_status);
             return -EIO;
         }
 
-        // 更新状态返回给用户空间
         if (copy_to_user((void __user *)arg, &params, sizeof(params)))
             return -EFAULT;
 
-        dev_info(&gdev->pdev->dev, "DMA completed successfully, status=0x%x\n", dma_status);
+        dev_info(&gdev->pdev->dev, "DMA completed, status=0x%x\n", dma_status);
         break;
     }
 
