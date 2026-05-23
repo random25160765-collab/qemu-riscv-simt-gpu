@@ -14,6 +14,7 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -29,6 +30,15 @@
 #include "ring/ring.h"
 #include "proto/pt_event.h"
 #include "core/proto.h"
+
+/* Memory barriers for host standalone (no QEMU osdep.h).
+ * Protocol:
+ *   QEMU: write data → smp_wmb() → write cmd  → eventfd_write(doorbell)
+ *   VPU:  read cmd   → smp_rmb() → read data
+ *   VPU:  write result → smp_wmb() → write cmd=NOP [→ eventfd_write(complete)]
+ *   QEMU: read cmd → if NOP: smp_rmb() → read result */
+#define smp_rmb() __atomic_thread_fence(__ATOMIC_ACQUIRE)
+#define smp_wmb() __atomic_thread_fence(__ATOMIC_RELEASE)
 
 typedef struct VPUCtrl {
     uint32_t cmd;
@@ -126,12 +136,21 @@ static int vpu_reg_write(GPGPUState *s, uint32_t offset, uint32_t val)
             uint64_t src = s->dma.src_addr;
             uint64_t dst = s->dma.dst_addr;
             uint32_t sz = s->dma.size;
-            if (dir) {
-                memcpy(s->vram_ptr + dst, s->vram_ptr + src, sz);
+            if (dst + sz > s->vram_size || sz > s->vram_size) {
+                s->dma.status = (1 << 2); /* DMA_ERROR — bounds */
+            } else if (dir) {
+                /* VRAM-to-VRAM: src is a VRAM offset */
+                if (src + sz <= s->vram_size)
+                    memcpy(s->vram_ptr + dst, s->vram_ptr + src, sz);
+                else
+                    s->dma.status = (1 << 2); /* DMA_ERROR — bounds */
             } else {
-                memcpy(s->vram_ptr + dst, (void *)(uintptr_t)src, sz);
+                /* Host-to-VRAM: src is a guest address — unsupported in standalone VPU.
+                 * Guest-to-device transfers go through VRAM BAR2 mmap, not DMA. */
+                s->dma.status = (1 << 2); /* DMA_ERROR — unsupported direction */
             }
-            s->dma.status = (1 << 1); /* DMA_COMPLETE */
+            if (s->dma.status != (1 << 2))
+                s->dma.status = (1 << 1); /* DMA_COMPLETE */
         }
         s->dma.ctrl = val;
         break;
@@ -211,6 +230,8 @@ int main(int argc, char **argv)
         fprintf(stderr, "VPU: failed to create ring buffers\n");
         return 1;
     }
+    gpgpu_inst_trace_set_ring(s.fast_ring);
+    gpgpu_event_set_ring(s.slow_ring);
 
     s.global_status = 1 << 0; /* READY */
 
@@ -223,6 +244,13 @@ int main(int argc, char **argv)
         }
 
         while (ctrl->cmd != VPU_CMD_NOP) {
+            /* Acquire barrier: ensure data[0]/data[1] reads see QEMU's writes */
+            smp_rmb();
+
+            /* Only DISPATCH signals completion via eventfd (async IRQ).
+             * Sync ops (REG_READ, REG_WRITE, RESET) use cmd==NOP as signal. */
+            bool async_irq = false;
+
             switch (ctrl->cmd) {
             case VPU_CMD_REG_WRITE: {
                 uint32_t offset = ctrl->data[0];
@@ -235,7 +263,9 @@ int main(int argc, char **argv)
                 uint32_t offset = ctrl->data[0];
                 uint32_t value;
                 vpu_reg_read(&s, offset, &value);
+                /* Write result BEFORE clearing cmd, with release barrier */
                 ctrl->data[1] = value;
+                smp_wmb();
                 GPGPU_EVENT(s.slow_ring, EVENT_REG_READ, offset, value);
                 break;
             }
@@ -267,11 +297,13 @@ int main(int argc, char **argv)
                     GPGPU_EVENT(s.slow_ring, EVENT_KERNEL_COMPLETE, ret);
                     ctrl->data[0] = ret;
                 }
+                smp_wmb(); /* ensure result visible before NOP */
+                async_irq = true;
                 break;
             }
             case VPU_CMD_RESET: {
                 s.global_ctrl = 0;
-                s.global_status = 1 << 0; /* READY */
+                s.global_status = (1 << 0); /* READY */
                 s.error_status = 0;
                 s.irq_enable = 0;
                 s.irq_status = 0;
@@ -284,9 +316,10 @@ int main(int argc, char **argv)
             }
 
             ctrl->cmd = VPU_CMD_NOP;
-            /* Notify QEMU that command processing is done */
-            uint64_t one = 1;
-            eventfd_write(complete_fd, one);
+            if (async_irq) {
+                uint64_t one = 1;
+                eventfd_write(complete_fd, one);
+            }
         }
     }
 

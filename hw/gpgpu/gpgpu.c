@@ -33,7 +33,24 @@
 
 /* =========================================================================
  * QEMU-VPU IPC helpers
+ *
+ * Protocol:
+ *   Sync ops (REG_READ, REG_WRITE, RESET):
+ *     QEMU writes cmd + data to CTRL shm, kicks doorbell, busy-waits until
+ *     VPU clears cmd to NOP. No eventfd for completion — cmd=NOP is the signal.
+ *   Async op (DISPATCH):
+ *     QEMU writes cmd, kicks doorbell, returns immediately. VPU executes the
+ *     kernel, writes result to data[0], sets cmd=NOP, writes completion eventfd.
+ *     QEMU's fd handler delivers IRQ to guest.
+ *
+ * Memory ordering:
+ *   QEMU: write data → smp_wmb() → write cmd → eventfd_write(doorbell)
+ *   VPU:  eventfd_read(doorbell) → read cmd → smp_rmb() → read data
+ *   VPU:  write result → smp_wmb() → write cmd=NOP [→ eventfd_write(complete)]
+ *   QEMU: read cmd → if NOP: smp_rmb() → read result
  * ========================================================================= */
+
+#define VPU_CTRL_DATA2_OFFSET 12
 
 static void gpgpu_send_cmd(GPGPUState *s, uint32_t cmd,
                            uint32_t data0, uint32_t data1)
@@ -46,19 +63,34 @@ static void gpgpu_send_cmd(GPGPUState *s, uint32_t cmd,
     eventfd_write(s->doorbell_fd, one);
 }
 
-static int gpgpu_wait_complete(GPGPUState *s)
+/* Busy-wait until VPU clears cmd to NOP. For sync ops (REG_READ, REG_WRITE,
+ * RESET). VPU processes register writes in sub-microsecond time, so this
+ * typically completes in a handful of iterations. */
+static int gpgpu_wait_done(GPGPUState *s)
 {
-    uint64_t val;
-    if (eventfd_read(s->complete_fd, &val) < 0) {
-        if (errno == EINTR)
-            return gpgpu_wait_complete(s);
-        return -1;
+    for (int i = 0; i < 10000000; i++) {
+        if (s->ctrl_ptr[VPU_CTRL_CMD_OFFSET / 4] == VPU_CMD_NOP) {
+            smp_rmb(); /* ensure we see VPU's data writes */
+            return 0;
+        }
     }
-    return 0;
+    qemu_log("GPGPU: timeout waiting for VPU to complete command\n");
+    return -1;
 }
 
 /* =========================================================================
- * BAR 0: Control registers — forwarded to VPU
+ * BAR 0: Control registers — local cache or forwarded to VPU
+ * =========================================================================
+ *
+ * Registers handled locally (no IPC):
+ *   DEV_ID, DEV_VERSION, DEV_CAPS, VRAM_SIZE_LO/HI: read-only constants
+ *   IRQ_ENABLE, IRQ_STATUS: QEMU owns interrupt delivery
+ *   GLOBAL_STATUS: cached in QEMU, VPU pushes updates via DISPATCH flow
+ *
+ * All other registers forwarded to VPU via CTRL shared memory.
+ * Reads are synchronous (wait for VPU response via busy-wait on cmd==NOP).
+ * Writes to 0x0330 (DISPATCH) trigger async kernel dispatch.
+ * Other writes are synchronous (wait for VPU to consume).
  * ========================================================================= */
 
 static uint64_t gpgpu_ctrl_read(void *opaque, hwaddr addr, unsigned size)
@@ -78,6 +110,8 @@ static uint64_t gpgpu_ctrl_read(void *opaque, hwaddr addr, unsigned size)
         return 0x04000000;
     case GPGPU_REG_VRAM_SIZE_HI:
         return 0x00000000;
+    case GPGPU_REG_GLOBAL_STATUS:
+        return s->global_status;
     case GPGPU_REG_IRQ_ENABLE:
         return s->irq_enable;
     case GPGPU_REG_IRQ_STATUS:
@@ -88,7 +122,7 @@ static uint64_t gpgpu_ctrl_read(void *opaque, hwaddr addr, unsigned size)
 
     /* Forward to VPU for all other registers */
     gpgpu_send_cmd(s, VPU_CMD_REG_READ, (uint32_t)addr, 0);
-    if (gpgpu_wait_complete(s) < 0)
+    if (gpgpu_wait_done(s) < 0)
         return ~0ULL;
     return s->ctrl_ptr[VPU_CTRL_DATA1_OFFSET / 4];
 }
@@ -99,19 +133,38 @@ static void gpgpu_ctrl_write(void *opaque, hwaddr addr, uint64_t val,
     GPGPUState *s = opaque;
 
     switch (addr) {
+    case GPGPU_REG_GLOBAL_CTRL:
+        /* Reset trigger: handled by VPU, but also reset local cache */
+        if (val & GPGPU_CTRL_RESET) {
+            s->irq_enable = 0;
+            s->irq_status = 0;
+            s->global_status = GPGPU_STATUS_READY;
+        }
+        gpgpu_send_cmd(s, VPU_CMD_REG_WRITE, (uint32_t)addr, (uint32_t)val);
+        gpgpu_wait_done(s);
+        return;
     case GPGPU_REG_IRQ_ENABLE:
         s->irq_enable = val;
         return;
+    case GPGPU_REG_IRQ_STATUS:
+        s->irq_status = val;
+        return;
     case GPGPU_REG_IRQ_ACK:
         s->irq_status &= ~val;
+        return;
+    case GPGPU_REG_DISPATCH:
+        /* Old driver compatibility: BAR0 write to 0x0330 triggers dispatch.
+         * Fire-and-forget — fd handler delivers IRQ when kernel completes. */
+        s->global_status = GPGPU_STATUS_BUSY;
+        gpgpu_send_cmd(s, VPU_CMD_DISPATCH, 0, 0);
         return;
     default:
         break;
     }
 
-    /* Forward to VPU */
+    /* Forward to VPU — synchronous, wait for VPU to consume */
     gpgpu_send_cmd(s, VPU_CMD_REG_WRITE, (uint32_t)addr, (uint32_t)val);
-    /* Writes are fire-and-forget (no completion wait) */
+    gpgpu_wait_done(s);
 }
 
 static const MemoryRegionOps gpgpu_ctrl_ops = {
@@ -143,7 +196,8 @@ static void gpgpu_doorbell_write(void *opaque, hwaddr addr, uint64_t val,
     GPGPUState *s = opaque;
 
     switch (addr) {
-    case 0x0330: /* DISPATCH */
+    case 0x0330: /* DISPATCH — fire-and-forget, IRQ on completion */
+        s->global_status = GPGPU_STATUS_BUSY;
         gpgpu_send_cmd(s, VPU_CMD_DISPATCH, 0, 0);
         break;
     default:
@@ -178,8 +232,13 @@ static void gpgpu_complete_handler(void *opaque)
         return;
     }
 
-    /* Read kernel completion status from CTRL shm */
+    /* Only DISPATCH uses eventfd completion. Sync ops (REG_READ, REG_WRITE)
+     * use busy-wait on cmd==NOP and never touch complete_fd. */
+    smp_rmb();
     int32_t ret = (int32_t)s->ctrl_ptr[VPU_CTRL_DATA_OFFSET / 4];
+
+    /* Kernel execution done — update cached status */
+    s->global_status = GPGPU_STATUS_READY;
 
     if (ret == 0) {
         s->irq_status |= GPGPU_IRQ_KERNEL_DONE;
@@ -339,6 +398,8 @@ static void gpgpu_realize(PCIDevice *pdev, Error **errp)
     /* Watch completion eventfd for IRQ delivery */
     qemu_set_fd_handler(s->complete_fd, gpgpu_complete_handler, NULL, s);
 
+    s->global_status = GPGPU_STATUS_READY;
+
     /* Spawn VPU child process */
     gpgpu_spawn_vpu(s, errp);
     if (*errp)
@@ -385,9 +446,11 @@ static void gpgpu_reset(DeviceState *dev)
 
     s->irq_enable = 0;
     s->irq_status = 0;
+    s->global_status = GPGPU_STATUS_READY;
 
     if (s->vpu_pid > 0) {
         gpgpu_send_cmd(s, VPU_CMD_RESET, 0, 0);
+        gpgpu_wait_done(s);
     }
 }
 
@@ -410,6 +473,7 @@ static const VMStateDescription vmstate_gpgpu = {
         VMSTATE_PCI_DEVICE(parent_obj, GPGPUState),
         VMSTATE_UINT32(irq_enable, GPGPUState),
         VMSTATE_UINT32(irq_status, GPGPUState),
+        VMSTATE_UINT32(global_status, GPGPUState),
         VMSTATE_END_OF_LIST()
     }
 };

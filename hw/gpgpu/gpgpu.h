@@ -193,9 +193,10 @@ struct GPGPUState {
     /* VPU 子进程 */
     pid_t vpu_pid;
 
-    /* 中断状态 (QEMU 侧维护，用于 IRQ 投递) */
+    /* QEMU 侧维护的 GPU 状态 (避免高频 IPC 轮询) */
     uint32_t irq_enable;
     uint32_t irq_status;
+    uint32_t global_status;
 };
 
 #endif /* HW_GPGPU_H */
