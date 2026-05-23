@@ -216,7 +216,7 @@ static void gpgpu_spawn_vpu(GPGPUState *s, Error **errp)
     snprintf(complete_str, sizeof(complete_str), "%d", s->complete_fd);
 
     char *argv[] = {
-        (char *)"build/vpu",
+        (char *)"hw/gpgpu/vpu/build/vpu",
         NULL
     };
 
