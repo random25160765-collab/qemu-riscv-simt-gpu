@@ -28,6 +28,7 @@
 #include <unistd.h>
 #include <errno.h>
 #include <spawn.h>
+#include <signal.h>
 
 #include "gpgpu.h"
 
@@ -264,15 +265,61 @@ static void gpgpu_complete_handler(void *opaque)
 }
 
 /* =========================================================================
+ * Error eventfd handler — VPU reports fatal software errors
+ * ========================================================================= */
+
+static void gpgpu_error_handler(void *opaque)
+{
+    GPGPUState *s = opaque;
+    uint64_t val;
+
+    if (eventfd_read(s->error_fd, &val) < 0) {
+        if (errno == EAGAIN || errno == EWOULDBLOCK)
+            return;
+        return;
+    }
+
+    qemu_log("GPGPU: VPU reported fatal error (code %" PRIu64 ")\n", val);
+}
+
+/* =========================================================================
+ * SIGCHLD handler — VPU crash detection
+ * ========================================================================= */
+
+static GPGPUState *gpgpu_sigchld_instance;
+
+static void gpgpu_sigchld_handler(int signum)
+{
+    /* Reap zombie child and mark as crashed.
+     * waitpid with WNOHANG: the VPU may have already been reaped by
+     * gpgpu_exit(), in which case this is a no-op. */
+    if (gpgpu_sigchld_instance && gpgpu_sigchld_instance->vpu_pid > 0) {
+        int status;
+        pid_t r = waitpid(gpgpu_sigchld_instance->vpu_pid, &status, WNOHANG);
+        if (r == gpgpu_sigchld_instance->vpu_pid) {
+            gpgpu_sigchld_instance->vpu_crashed = true;
+            if (WIFEXITED(status))
+                qemu_log("GPGPU: VPU exited with status %d\n",
+                         WEXITSTATUS(status));
+            else if (WIFSIGNALED(status))
+                qemu_log("GPGPU: VPU killed by signal %d\n",
+                         WTERMSIG(status));
+        }
+    }
+}
+
+/* =========================================================================
  * VPU child process management
  * ========================================================================= */
 
 static void gpgpu_spawn_vpu(GPGPUState *s, Error **errp)
 {
-    char doorbell_str[32], complete_str[32];
+    char doorbell_str[32], complete_str[32], error_str[32], vram_size_str[32];
 
     snprintf(doorbell_str, sizeof(doorbell_str), "%d", s->doorbell_fd);
     snprintf(complete_str, sizeof(complete_str), "%d", s->complete_fd);
+    snprintf(error_str, sizeof(error_str), "%d", s->error_fd);
+    snprintf(vram_size_str, sizeof(vram_size_str), "%" PRIu64, s->vram_size);
 
     char *argv[] = {
         (char *)"/home/rd/courses/qemu-riscv-simt-gpu/hw/gpgpu/vpu/build/vpu",
@@ -282,6 +329,8 @@ static void gpgpu_spawn_vpu(GPGPUState *s, Error **errp)
     char *envp[] = {
         g_strdup_printf("%s=%s", VPU_ENV_DOORBELL_FD, doorbell_str),
         g_strdup_printf("%s=%s", VPU_ENV_COMPLETE_FD, complete_str),
+        g_strdup_printf("%s=%s", VPU_ENV_VRAM_SIZE, vram_size_str),
+        g_strdup_printf("%s=%s", VPU_ENV_ERROR_FD, error_str),
         NULL
     };
 
@@ -293,6 +342,8 @@ static void gpgpu_spawn_vpu(GPGPUState *s, Error **errp)
 
     g_free(envp[0]);
     g_free(envp[1]);
+    g_free(envp[2]);
+    g_free(envp[3]);
 
     if (ret != 0) {
         error_setg(errp, "GPGPU: failed to spawn VPU process: %s",
@@ -356,7 +407,8 @@ static void gpgpu_realize(PCIDevice *pdev, Error **errp)
     /* Create eventfds */
     s->doorbell_fd = eventfd(0, EFD_SEMAPHORE);
     s->complete_fd = eventfd(0, EFD_NONBLOCK);
-    if (s->doorbell_fd < 0 || s->complete_fd < 0) {
+    s->error_fd = eventfd(0, EFD_NONBLOCK);
+    if (s->doorbell_fd < 0 || s->complete_fd < 0 || s->error_fd < 0) {
         error_setg(errp, "GPGPU: failed to create eventfd");
         return;
     }
@@ -398,7 +450,15 @@ static void gpgpu_realize(PCIDevice *pdev, Error **errp)
     /* Watch completion eventfd for IRQ delivery */
     qemu_set_fd_handler(s->complete_fd, gpgpu_complete_handler, NULL, s);
 
+    /* Watch error eventfd for VPU software errors */
+    qemu_set_fd_handler(s->error_fd, gpgpu_error_handler, NULL, s);
+
+    /* Register SIGCHLD handler for VPU crash detection */
+    gpgpu_sigchld_instance = s;
+    signal(SIGCHLD, gpgpu_sigchld_handler);
+
     s->global_status = GPGPU_STATUS_READY;
+    s->vpu_crashed = false;
 
     /* Spawn VPU child process */
     gpgpu_spawn_vpu(s, errp);
@@ -410,7 +470,11 @@ static void gpgpu_exit(PCIDevice *pdev)
 {
     GPGPUState *s = GPGPU(pdev);
 
+    signal(SIGCHLD, SIG_DFL);
+    gpgpu_sigchld_instance = NULL;
+
     qemu_set_fd_handler(s->complete_fd, NULL, NULL, NULL);
+    qemu_set_fd_handler(s->error_fd, NULL, NULL, NULL);
 
     if (s->vpu_pid > 0) {
         kill(s->vpu_pid, SIGTERM);
@@ -435,6 +499,8 @@ static void gpgpu_exit(PCIDevice *pdev)
         close(s->doorbell_fd);
     if (s->complete_fd >= 0)
         close(s->complete_fd);
+    if (s->error_fd >= 0)
+        close(s->error_fd);
 
     msix_uninit(pdev, &s->ctrl_mmio, &s->ctrl_mmio);
     msi_uninit(pdev);

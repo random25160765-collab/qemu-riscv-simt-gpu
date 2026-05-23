@@ -48,47 +48,47 @@ typedef struct VPUCtrl {
 static int vpu_reg_read(GPGPUState *s, uint32_t offset, uint32_t *val)
 {
     switch (offset) {
-    case 0x0000: *val = 0x47505055; break;           /* DEV_ID */
-    case 0x0004: *val = 0x00010000; break;            /* DEV_VERSION */
-    case 0x0008: /* DEV_CAPS */
+    case GPGPU_REG_DEV_ID:        *val = GPGPU_DEV_ID_VALUE; break;
+    case GPGPU_REG_DEV_VERSION:   *val = GPGPU_DEV_VERSION_VALUE; break;
+    case GPGPU_REG_DEV_CAPS:
         *val = (s->num_cus & 0xFF) |
                ((s->warps_per_cu & 0xFF) << 8) |
                ((s->warp_size & 0xFF) << 16);
         break;
-    case 0x000C: *val = 0x04000000; break;            /* VRAM_SIZE_LO */
-    case 0x0010: *val = 0x00000000; break;            /* VRAM_SIZE_HI */
-    case 0x0100: *val = s->global_ctrl; break;
-    case 0x0104: *val = s->global_status; break;
-    case 0x0108: *val = s->error_status; break;
-    case 0x0200: *val = s->irq_enable; break;
-    case 0x0204: *val = s->irq_status; break;
-    case 0x0300: *val = (uint32_t)s->kernel.kernel_addr; break;
-    case 0x0304: *val = (uint32_t)(s->kernel.kernel_addr >> 32); break;
-    case 0x0308: *val = (uint32_t)s->kernel.kernel_args; break;
-    case 0x030C: *val = (uint32_t)(s->kernel.kernel_args >> 32); break;
-    case 0x0328: *val = s->kernel.shared_mem_size; break;
-    case 0x0310: *val = s->kernel.grid_dim[0]; break;
-    case 0x0314: *val = s->kernel.grid_dim[1]; break;
-    case 0x0318: *val = s->kernel.grid_dim[2]; break;
-    case 0x031C: *val = s->kernel.block_dim[0]; break;
-    case 0x0320: *val = s->kernel.block_dim[1]; break;
-    case 0x0324: *val = s->kernel.block_dim[2]; break;
-    case 0x0400: *val = (uint32_t)s->dma.src_addr; break;
-    case 0x0404: *val = (uint32_t)(s->dma.src_addr >> 32); break;
-    case 0x0408: *val = (uint32_t)s->dma.dst_addr; break;
-    case 0x040C: *val = (uint32_t)(s->dma.dst_addr >> 32); break;
-    case 0x0410: *val = s->dma.size; break;
-    case 0x0414: *val = s->dma.ctrl; break;
-    case 0x0418: *val = s->dma.status; break;
-    case 0x1000: *val = s->simt.thread_id[0]; break;
-    case 0x1004: *val = s->simt.thread_id[1]; break;
-    case 0x1008: *val = s->simt.thread_id[2]; break;
-    case 0x1010: *val = s->simt.block_id[0]; break;
-    case 0x1014: *val = s->simt.block_id[1]; break;
-    case 0x1018: *val = s->simt.block_id[2]; break;
-    case 0x1020: *val = s->simt.warp_id; break;
-    case 0x1024: *val = s->simt.lane_id; break;
-    case 0x2004: *val = s->simt.thread_mask; break;
+    case GPGPU_REG_VRAM_SIZE_LO:  *val = 0x04000000; break;
+    case GPGPU_REG_VRAM_SIZE_HI:  *val = 0x00000000; break;
+    case GPGPU_REG_GLOBAL_CTRL:   *val = s->global_ctrl; break;
+    case GPGPU_REG_GLOBAL_STATUS: *val = s->global_status; break;
+    case GPGPU_REG_ERROR_STATUS:  *val = s->error_status; break;
+    case GPGPU_REG_IRQ_ENABLE:    *val = s->irq_enable; break;
+    case GPGPU_REG_IRQ_STATUS:    *val = s->irq_status; break;
+    case GPGPU_REG_KERNEL_ADDR_LO: *val = (uint32_t)s->kernel.kernel_addr; break;
+    case GPGPU_REG_KERNEL_ADDR_HI: *val = (uint32_t)(s->kernel.kernel_addr >> 32); break;
+    case GPGPU_REG_KERNEL_ARGS_LO: *val = (uint32_t)s->kernel.kernel_args; break;
+    case GPGPU_REG_KERNEL_ARGS_HI: *val = (uint32_t)(s->kernel.kernel_args >> 32); break;
+    case GPGPU_REG_SHARED_MEM_SIZE: *val = s->kernel.shared_mem_size; break;
+    case GPGPU_REG_GRID_DIM_X:    *val = s->kernel.grid_dim[0]; break;
+    case GPGPU_REG_GRID_DIM_Y:    *val = s->kernel.grid_dim[1]; break;
+    case GPGPU_REG_GRID_DIM_Z:    *val = s->kernel.grid_dim[2]; break;
+    case GPGPU_REG_BLOCK_DIM_X:   *val = s->kernel.block_dim[0]; break;
+    case GPGPU_REG_BLOCK_DIM_Y:   *val = s->kernel.block_dim[1]; break;
+    case GPGPU_REG_BLOCK_DIM_Z:   *val = s->kernel.block_dim[2]; break;
+    case GPGPU_REG_DMA_SRC_LO:    *val = (uint32_t)s->dma.src_addr; break;
+    case GPGPU_REG_DMA_SRC_HI:    *val = (uint32_t)(s->dma.src_addr >> 32); break;
+    case GPGPU_REG_DMA_DST_LO:    *val = (uint32_t)s->dma.dst_addr; break;
+    case GPGPU_REG_DMA_DST_HI:    *val = (uint32_t)(s->dma.dst_addr >> 32); break;
+    case GPGPU_REG_DMA_SIZE:      *val = s->dma.size; break;
+    case GPGPU_REG_DMA_CTRL:      *val = s->dma.ctrl; break;
+    case GPGPU_REG_DMA_STATUS:    *val = s->dma.status; break;
+    case GPGPU_REG_THREAD_ID_X:   *val = s->simt.thread_id[0]; break;
+    case GPGPU_REG_THREAD_ID_Y:   *val = s->simt.thread_id[1]; break;
+    case GPGPU_REG_THREAD_ID_Z:   *val = s->simt.thread_id[2]; break;
+    case GPGPU_REG_BLOCK_ID_X:    *val = s->simt.block_id[0]; break;
+    case GPGPU_REG_BLOCK_ID_Y:    *val = s->simt.block_id[1]; break;
+    case GPGPU_REG_BLOCK_ID_Z:    *val = s->simt.block_id[2]; break;
+    case GPGPU_REG_WARP_ID:       *val = s->simt.warp_id; break;
+    case GPGPU_REG_LANE_ID:       *val = s->simt.lane_id; break;
+    case GPGPU_REG_THREAD_MASK:   *val = s->simt.thread_mask; break;
     default:
         return -1;
     }
@@ -98,10 +98,10 @@ static int vpu_reg_read(GPGPUState *s, uint32_t offset, uint32_t *val)
 static int vpu_reg_write(GPGPUState *s, uint32_t offset, uint32_t val)
 {
     switch (offset) {
-    case 0x0100: /* GLOBAL_CTRL */
-        if (val & (1 << 1)) { /* reset */
+    case GPGPU_REG_GLOBAL_CTRL:
+        if (val & GPGPU_CTRL_RESET) {
             s->global_ctrl = 0;
-            s->global_status = (1 << 0); /* READY */
+            s->global_status = GPGPU_STATUS_READY;
             s->error_status = 0;
             s->irq_status = 0;
             memset(&s->simt, 0, sizeof(s->simt));
@@ -111,60 +111,57 @@ static int vpu_reg_write(GPGPUState *s, uint32_t offset, uint32_t val)
             s->global_ctrl = val;
         }
         break;
-    case 0x0108: s->error_status &= ~val; break;
-    case 0x0200: s->irq_enable = val; break;
-    case 0x0208: s->irq_status &= ~val; break;
-    case 0x0300: s->kernel.kernel_addr = (s->kernel.kernel_addr & 0xFFFFFFFF00000000ULL) | val; break;
-    case 0x0304: s->kernel.kernel_addr = (s->kernel.kernel_addr & 0x00000000FFFFFFFFULL) | ((uint64_t)val << 32); break;
-    case 0x0308: s->kernel.kernel_args = (s->kernel.kernel_args & 0xFFFFFFFF00000000ULL) | val; break;
-    case 0x030C: s->kernel.kernel_args = (s->kernel.kernel_args & 0x00000000FFFFFFFFULL) | ((uint64_t)val << 32); break;
-    case 0x0310: s->kernel.grid_dim[0] = val; break;
-    case 0x0314: s->kernel.grid_dim[1] = val; break;
-    case 0x0318: s->kernel.grid_dim[2] = val; break;
-    case 0x031C: s->kernel.block_dim[0] = val; break;
-    case 0x0320: s->kernel.block_dim[1] = val; break;
-    case 0x0324: s->kernel.block_dim[2] = val; break;
-    case 0x0328: s->kernel.shared_mem_size = val; break;
-    case 0x0400: s->dma.src_addr = (s->dma.src_addr & 0xFFFFFFFF00000000ULL) | val; break;
-    case 0x0404: s->dma.src_addr = (s->dma.src_addr & 0x00000000FFFFFFFFULL) | ((uint64_t)val << 32); break;
-    case 0x0408: s->dma.dst_addr = (s->dma.dst_addr & 0xFFFFFFFF00000000ULL) | val; break;
-    case 0x040C: s->dma.dst_addr = (s->dma.dst_addr & 0x00000000FFFFFFFFULL) | ((uint64_t)val << 32); break;
-    case 0x0410: s->dma.size = val; break;
-    case 0x0414: /* DMA_CTRL */
-        if (val & (1 << 0)) { /* DMA_START */
-            bool dir = (val & (1 << 1)) != 0;
+    case GPGPU_REG_ERROR_STATUS: s->error_status &= ~val; break;
+    case GPGPU_REG_IRQ_ENABLE:   s->irq_enable = val; break;
+    case GPGPU_REG_IRQ_ACK:      s->irq_status &= ~val; break;
+    case GPGPU_REG_KERNEL_ADDR_LO: s->kernel.kernel_addr = (s->kernel.kernel_addr & 0xFFFFFFFF00000000ULL) | val; break;
+    case GPGPU_REG_KERNEL_ADDR_HI: s->kernel.kernel_addr = (s->kernel.kernel_addr & 0x00000000FFFFFFFFULL) | ((uint64_t)val << 32); break;
+    case GPGPU_REG_KERNEL_ARGS_LO: s->kernel.kernel_args = (s->kernel.kernel_args & 0xFFFFFFFF00000000ULL) | val; break;
+    case GPGPU_REG_KERNEL_ARGS_HI: s->kernel.kernel_args = (s->kernel.kernel_args & 0x00000000FFFFFFFFULL) | ((uint64_t)val << 32); break;
+    case GPGPU_REG_GRID_DIM_X:   s->kernel.grid_dim[0] = val; break;
+    case GPGPU_REG_GRID_DIM_Y:   s->kernel.grid_dim[1] = val; break;
+    case GPGPU_REG_GRID_DIM_Z:   s->kernel.grid_dim[2] = val; break;
+    case GPGPU_REG_BLOCK_DIM_X:  s->kernel.block_dim[0] = val; break;
+    case GPGPU_REG_BLOCK_DIM_Y:  s->kernel.block_dim[1] = val; break;
+    case GPGPU_REG_BLOCK_DIM_Z:  s->kernel.block_dim[2] = val; break;
+    case GPGPU_REG_SHARED_MEM_SIZE: s->kernel.shared_mem_size = val; break;
+    case GPGPU_REG_DMA_SRC_LO:   s->dma.src_addr = (s->dma.src_addr & 0xFFFFFFFF00000000ULL) | val; break;
+    case GPGPU_REG_DMA_SRC_HI:   s->dma.src_addr = (s->dma.src_addr & 0x00000000FFFFFFFFULL) | ((uint64_t)val << 32); break;
+    case GPGPU_REG_DMA_DST_LO:   s->dma.dst_addr = (s->dma.dst_addr & 0xFFFFFFFF00000000ULL) | val; break;
+    case GPGPU_REG_DMA_DST_HI:   s->dma.dst_addr = (s->dma.dst_addr & 0x00000000FFFFFFFFULL) | ((uint64_t)val << 32); break;
+    case GPGPU_REG_DMA_SIZE:     s->dma.size = val; break;
+    case GPGPU_REG_DMA_CTRL:
+        if (val & GPGPU_DMA_START) {
+            bool dir = (val & GPGPU_DMA_DIR_FROM_VRAM) != 0;
             uint64_t src = s->dma.src_addr;
             uint64_t dst = s->dma.dst_addr;
             uint32_t sz = s->dma.size;
             if (dst + sz > s->vram_size || sz > s->vram_size) {
-                s->dma.status = (1 << 2); /* DMA_ERROR — bounds */
+                s->dma.status = GPGPU_DMA_ERROR;
             } else if (dir) {
-                /* VRAM-to-VRAM: src is a VRAM offset */
                 if (src + sz <= s->vram_size)
                     memcpy(s->vram_ptr + dst, s->vram_ptr + src, sz);
                 else
-                    s->dma.status = (1 << 2); /* DMA_ERROR — bounds */
+                    s->dma.status = GPGPU_DMA_ERROR;
             } else {
-                /* Host-to-VRAM: src is a guest address — unsupported in standalone VPU.
-                 * Guest-to-device transfers go through VRAM BAR2 mmap, not DMA. */
-                s->dma.status = (1 << 2); /* DMA_ERROR — unsupported direction */
+                s->dma.status = GPGPU_DMA_ERROR;
             }
-            if (s->dma.status != (1 << 2))
-                s->dma.status = (1 << 1); /* DMA_COMPLETE */
+            if (s->dma.status != GPGPU_DMA_ERROR)
+                s->dma.status = GPGPU_DMA_COMPLETE;
         }
         s->dma.ctrl = val;
         break;
-    case 0x0418: break; /* DMA_STATUS read-only */
-    case 0x1000: s->simt.thread_id[0] = val; break;
-    case 0x1004: s->simt.thread_id[1] = val; break;
-    case 0x1008: s->simt.thread_id[2] = val; break;
-    case 0x1010: s->simt.block_id[0] = val; break;
-    case 0x1014: s->simt.block_id[1] = val; break;
-    case 0x1018: s->simt.block_id[2] = val; break;
-    case 0x1020: s->simt.warp_id = val; break;
-    case 0x1024: s->simt.lane_id = val; break;
-    case 0x2000: break; /* BARRIER — no-op */
-    case 0x2004: s->simt.thread_mask = val; break;
+    case GPGPU_REG_DMA_STATUS:   break; /* read-only */
+    case GPGPU_REG_THREAD_ID_X:  s->simt.thread_id[0] = val; break;
+    case GPGPU_REG_THREAD_ID_Y:  s->simt.thread_id[1] = val; break;
+    case GPGPU_REG_THREAD_ID_Z:  s->simt.thread_id[2] = val; break;
+    case GPGPU_REG_BLOCK_ID_X:   s->simt.block_id[0] = val; break;
+    case GPGPU_REG_BLOCK_ID_Y:   s->simt.block_id[1] = val; break;
+    case GPGPU_REG_BLOCK_ID_Z:   s->simt.block_id[2] = val; break;
+    case GPGPU_REG_WARP_ID:      s->simt.warp_id = val; break;
+    case GPGPU_REG_LANE_ID:      s->simt.lane_id = val; break;
+    case GPGPU_REG_BARRIER:      break; /* no-op */
+    case GPGPU_REG_THREAD_MASK:  s->simt.thread_mask = val; break;
     default:
         return -1;
     }
@@ -183,43 +180,49 @@ int main(int argc, char **argv)
     s.num_cus = 4;
     s.warps_per_cu = 4;
     s.warp_size = 32;
-    s.vram_size = 64 * 1024 * 1024; /* 64 MB */
+    s.vram_size = 64 * 1024 * 1024; /* 64 MB default */
+
+    /* Override VRAM size from environment (set by QEMU) */
+    const char *vram_size_str = getenv(VPU_ENV_VRAM_SIZE);
+    if (vram_size_str) {
+        uint64_t env_size = strtoull(vram_size_str, NULL, 10);
+        long page_sz = sysconf(_SC_PAGESIZE);
+        if (env_size > 0 && page_sz > 0 && (env_size % (uint64_t)page_sz) == 0) {
+            s.vram_size = env_size;
+        }
+    }
+
+    /* Get eventfd from environment (read early so VPU_FATAL can use error_fd) */
+    const char *doorbell_str = getenv(VPU_ENV_DOORBELL_FD);
+    const char *complete_str = getenv(VPU_ENV_COMPLETE_FD);
+    const char *error_str = getenv(VPU_ENV_ERROR_FD);
+    int error_fd = error_str ? atoi(error_str) : -1;
+
+    /* Report fatal error to QEMU (via error_fd) and exit */
+    #define VPU_FATAL(msg) do { \
+        fprintf(stderr, "VPU fatal: %s", msg); \
+        if (errno) fprintf(stderr, ": %s", strerror(errno)); \
+        fprintf(stderr, "\n"); \
+        if (error_fd >= 0) { uint64_t one = 1; eventfd_write(error_fd, one); } \
+    } while (0)
 
     /* Open VRAM shared memory (created by QEMU) */
     int vram_fd = shm_open(VPU_SHM_VRAM_NAME, O_RDWR, 0600);
-    if (vram_fd < 0) {
-        fprintf(stderr, "VPU: failed to open VRAM shm: %s\n", strerror(errno));
-        return 1;
-    }
+    if (vram_fd < 0) { VPU_FATAL("failed to open VRAM shm"); return 1; }
     s.vram_ptr = mmap(NULL, s.vram_size, PROT_READ | PROT_WRITE,
                       MAP_SHARED, vram_fd, 0);
-    if (s.vram_ptr == MAP_FAILED) {
-        fprintf(stderr, "VPU: failed to mmap VRAM: %s\n", strerror(errno));
-        return 1;
-    }
+    if (s.vram_ptr == MAP_FAILED) { VPU_FATAL("failed to mmap VRAM"); return 1; }
     close(vram_fd);
 
     /* Open CTRL shared memory (created by QEMU) */
     int ctrl_fd = shm_open(VPU_SHM_CTRL_NAME, O_RDWR, 0600);
-    if (ctrl_fd < 0) {
-        fprintf(stderr, "VPU: failed to open CTRL shm: %s\n", strerror(errno));
-        return 1;
-    }
+    if (ctrl_fd < 0) { VPU_FATAL("failed to open CTRL shm"); return 1; }
     VPUCtrl *ctrl = mmap(NULL, VPU_CTRL_SIZE, PROT_READ | PROT_WRITE,
                          MAP_SHARED, ctrl_fd, 0);
-    if (ctrl == MAP_FAILED) {
-        fprintf(stderr, "VPU: failed to mmap CTRL: %s\n", strerror(errno));
-        return 1;
-    }
+    if (ctrl == MAP_FAILED) { VPU_FATAL("failed to mmap CTRL"); return 1; }
     close(ctrl_fd);
 
-    /* Get eventfd from environment */
-    const char *doorbell_str = getenv(VPU_ENV_DOORBELL_FD);
-    const char *complete_str = getenv(VPU_ENV_COMPLETE_FD);
-    if (!doorbell_str || !complete_str) {
-        fprintf(stderr, "VPU: missing eventfd env vars\n");
-        return 1;
-    }
+    if (!doorbell_str || !complete_str) { VPU_FATAL("missing eventfd env vars"); return 1; }
     int doorbell_fd = atoi(doorbell_str);
     int complete_fd = atoi(complete_str);
 
@@ -233,7 +236,7 @@ int main(int argc, char **argv)
     gpgpu_inst_trace_set_ring(s.fast_ring);
     gpgpu_event_set_ring(s.slow_ring);
 
-    s.global_status = 1 << 0; /* READY */
+    s.global_status = GPGPU_STATUS_READY;
 
     /* Main loop */
     while (1) {
@@ -271,9 +274,9 @@ int main(int argc, char **argv)
             }
             case VPU_CMD_DISPATCH: {
                 s.error_status = 0;
-                s.irq_status &= ~(1 << 2); /* clear ERROR IRQ */
+                s.irq_status &= ~GPGPU_IRQ_ERROR;
 
-                if (s.global_status != (1 << 0) || /* not READY */
+                if (s.global_status != GPGPU_STATUS_READY ||
                     s.kernel.grid_dim[0] == 0 ||
                     s.kernel.grid_dim[1] == 0 ||
                     s.kernel.grid_dim[2] == 0 ||
@@ -292,25 +295,25 @@ int main(int argc, char **argv)
                                 s.kernel.block_dim[0],
                                 s.kernel.block_dim[1],
                                 s.kernel.block_dim[2]);
-                    s.global_status = (1 << 1); /* BUSY */
+                    s.global_status = GPGPU_STATUS_BUSY;
                     int ret = gpgpu_core_exec_kernel(&s);
                     GPGPU_EVENT(s.slow_ring, EVENT_KERNEL_COMPLETE, ret);
                     ctrl->data[0] = ret;
                 }
-                smp_wmb(); /* ensure result visible before NOP */
+                smp_wmb();
                 async_irq = true;
                 break;
             }
             case VPU_CMD_RESET: {
                 s.global_ctrl = 0;
-                s.global_status = (1 << 0); /* READY */
+                s.global_status = GPGPU_STATUS_READY;
                 s.error_status = 0;
                 s.irq_enable = 0;
                 s.irq_status = 0;
                 memset(&s.kernel, 0, sizeof(s.kernel));
                 memset(&s.dma, 0, sizeof(s.dma));
                 memset(&s.simt, 0, sizeof(s.simt));
-                GPGPU_EVENT(s.slow_ring, EVENT_STATE_CHANGE, 0, 1 << 0);
+                GPGPU_EVENT(s.slow_ring, EVENT_STATE_CHANGE, 0, GPGPU_STATUS_READY);
                 break;
             }
             }
