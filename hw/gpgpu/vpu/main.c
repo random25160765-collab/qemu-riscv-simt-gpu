@@ -23,6 +23,7 @@
 #include <sys/eventfd.h>
 #include <fcntl.h>
 #include <errno.h>
+#include <signal.h>
 
 #include "state.h"
 #include "iface.h"
@@ -168,10 +169,21 @@ static int vpu_reg_write(GPGPUState *s, uint32_t offset, uint32_t val)
     return 0;
 }
 
+static volatile sig_atomic_t vpu_should_exit;
+
+static void vpu_sigterm_handler(int sig)
+{
+    (void)sig;
+    vpu_should_exit = 1;
+}
+
 int main(int argc, char **argv)
 {
     (void)argc;
     (void)argv;
+
+    signal(SIGTERM, vpu_sigterm_handler);
+    signal(SIGINT, vpu_sigterm_handler);
 
     GPGPUState s;
     memset(&s, 0, sizeof(s));
@@ -238,8 +250,8 @@ int main(int argc, char **argv)
 
     s.global_status = GPGPU_STATUS_READY;
 
-    /* Main loop */
-    while (1) {
+    /* Main loop — vpu_should_exit is set by SIGTERM/SIGINT handler */
+    while (!vpu_should_exit) {
         uint64_t val;
         if (eventfd_read(doorbell_fd, &val) < 0) {
             if (errno == EINTR) continue;

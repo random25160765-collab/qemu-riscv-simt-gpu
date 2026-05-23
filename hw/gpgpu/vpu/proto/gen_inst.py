@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 指令编码生成器
-用法：python3 gen.py <输出路径>
-示例：python3 gen.py ../include/pt_inst.h
+用法：python3 gen_inst.py <输出路径>
+示例：python3 gen_inst.py ../include/pt_inst.h
 """
 
 import sys
