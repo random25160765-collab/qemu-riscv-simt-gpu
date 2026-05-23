@@ -1,13 +1,14 @@
 #ifndef MEMORY_H
 #define MEMORY_H
 
-#include "qemu/osdep.h"
+#include <stdint.h>
+#include "proto.h"
 
 typedef struct GPGPUState GPGPUState;
 
 static inline void out_of_bound(GPGPUState *s, uint32_t addr, int len) {
     if (addr + len > s->vram_size) {
-        qemu_log_mask(LOG_GUEST_ERROR, "VRAM read out of bounds: addr=0x%08x, len=%d\n", addr, len);
+        VPU_EVENT(event_ring, EVENT_ERROR_EVENT, 0x01 /* VRAM_FAULT */, addr);
     }
 }
 

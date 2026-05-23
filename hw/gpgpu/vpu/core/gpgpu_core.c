@@ -1,5 +1,5 @@
 /*
- * QEMU GPGPU - RISC-V SIMT Core Implementation
+ * VPU - RISC-V SIMT Core Implementation
  *
  * Copyright (c) 2024-2025
  *
@@ -7,12 +7,11 @@
  * See the COPYING file in the top-level directory.
  */
 
-#include "qemu/osdep.h"
-#include "qemu/log.h"
-#include "qemu/host-utils.h"
+#include <stdint.h>
+#include <stddef.h>
+#include <string.h>
 #include "gpgpu.h"
 #include "gpgpu_core.h"
-#include "gpgpu_log.h"
 #include "lpfp.h"
 #include "memory.h"
 #include "inst.h"
@@ -73,7 +72,7 @@ static uint32_t csr_read(GPGPULane *l, uint16_t csr_addr) {
         case CSR_FCSR:
             return l->fcsr;
         default:
-            GPGPU_ERR("csr_read: unknown CSR 0x%03x", csr_addr);
+            VPU_EVENT(event_ring, EVENT_ERROR_EVENT, VPU_ERR_CSR_ACCESS, csr_addr);
             return 0;
     }
 }
@@ -91,11 +90,10 @@ static void csr_write(GPGPULane *l, uint16_t csr_addr, uint32_t val) {
             l->fcsr = val;
             break;
         case CSR_MHARTID:
-            // RO register, ignore write
-            GPGPU_ERR("csr_write: attempt to write read-only CSR 0x%03x", csr_addr);
+            VPU_EVENT(event_ring, EVENT_ERROR_EVENT, VPU_ERR_CSR_ACCESS, csr_addr);
             break;
         default:
-            GPGPU_ERR("csr_write: unknown CSR 0x%03x", csr_addr);
+            VPU_EVENT(event_ring, EVENT_ERROR_EVENT, VPU_ERR_CSR_ACCESS, csr_addr);
             break;
     }
 }
@@ -313,7 +311,7 @@ EXEC_FUNC_IN(ebreak,   {
 			/* nothing */
 	})
 
-/* CSRRW: 原子交换 CSR 和整数寄存器 */
+/* CSRRW */
 EXEC_FUNC_IN(csrrw, {
 	    uint16_t csr = (uint16_t)imm;
 	    uint32_t old_val = csr_read(l, csr);
@@ -322,18 +320,18 @@ EXEC_FUNC_IN(csrrw, {
 	    csr_write(l, csr, src1);
 	})
 
-/* CSRRS: 读 CSR 并置位 */
+/* CSRRS */
 EXEC_FUNC_IN(csrrs, {
 	    uint16_t csr = (uint16_t)imm;
 	    uint32_t old_val = csr_read(l, csr);
 	    GPGPU_INST_BIN(INST_CSRRS, (uint32_t)rd, (uint32_t)csr, src1);
 	    G(rd) = old_val;
-	    if (ctx->rs1 != 0) {  // x0 时只读不写
+	    if (ctx->rs1 != 0) {
 	        csr_write(l, csr, old_val | src1);
 	    }
 	})
 
-/* CSRRC: 读 CSR 并清零 */
+/* CSRRC */
 EXEC_FUNC_IN(csrrc, {
 	    uint16_t csr = (uint16_t)imm;
 	    uint32_t old_val = csr_read(l, csr);
@@ -344,16 +342,16 @@ EXEC_FUNC_IN(csrrc, {
 	    }
 	})
 
-/* CSRRWI: 原子交换 CSR 和立即数 */
+/* CSRRWI */
 EXEC_FUNC_IN(csrrwi, {
 	    uint16_t csr = (uint16_t)imm;
 	    GPGPU_INST_BIN(INST_CSRRWI, (uint32_t)rd, (uint32_t)csr, (uint32_t)ctx->rs1);
 	    uint32_t old_val = csr_read(l, csr);
 	    G(rd) = old_val;
-	    csr_write(l, csr, (uint32_t)ctx->rs1);  // uimm[4:0]
+	    csr_write(l, csr, (uint32_t)ctx->rs1);
 	})
 
-/* CSRRSI: 读 CSR 并用立即数置位 */
+/* CSRRSI */
 EXEC_FUNC_IN(csrrsi, {
 	    uint16_t csr = (uint16_t)imm;
 	    GPGPU_INST_BIN(INST_CSRRSI, (uint32_t)rd, (uint32_t)csr, (uint32_t)ctx->rs1);
@@ -364,7 +362,7 @@ EXEC_FUNC_IN(csrrsi, {
 	    }
 	})
 
-/* CSRRCI: 读 CSR 并用立即数清零 */
+/* CSRRCI */
 EXEC_FUNC_IN(csrrci, {
 	    uint16_t csr = (uint16_t)imm;
 	    uint32_t old_val = csr_read(l, csr);
@@ -777,29 +775,12 @@ static void __attribute__((constructor)) init_opcode_table(void)
 {
 	    int idx = 0;
 
-	    GPGPU_INFO("=== Initializing Opcode Table ===");
-	    GPGPU_INFO("Enum values: TYPE_R=%d, TYPE_I=%d, TYPE_U=%d, TYPE_S=%d, TYPE_J=%d, TYPE_B=%d, TYPE_CSR=%d, TYPE_FR=%d, TYPE_FI=%d, TYPE_FS=%d, TYPE_F4=%d",
-	            TYPE_R, TYPE_I, TYPE_U, TYPE_S, TYPE_J, TYPE_B, TYPE_CSR, TYPE_FR, TYPE_FI, TYPE_FS, TYPE_F4);
-
 	#define X(name, pattern, op_type) \
 	    do { \
 	        opcode_table[idx].mask = pattern_to_mask(pattern); \
 	        opcode_table[idx].match = pattern_to_match(pattern); \
 	        opcode_table[idx].exec = exec_##name; \
 	        opcode_table[idx].type = op_type; \
-	            GPGPU_INFO("entry %2d: %-10s mask=0x%08x match=0x%08x type=%d (%s)", \
-	                    idx, #name, opcode_table[idx].mask, opcode_table[idx].match, op_type, \
-	                    op_type == TYPE_R ? "TYPE_R" : \
-	                    op_type == TYPE_I ? "TYPE_I" : \
-	                    op_type == TYPE_U ? "TYPE_U" : \
-	                    op_type == TYPE_S ? "TYPE_S" : \
-	                    op_type == TYPE_J ? "TYPE_J" : \
-	                    op_type == TYPE_B ? "TYPE_B" : \
-	                    op_type == TYPE_CSR ? "TYPE_CSR" : \
-	                    op_type == TYPE_FR ? "TYPE_FR" : \
-	                    op_type == TYPE_FI ? "TYPE_FI" : \
-	                    op_type == TYPE_FS ? "TYPE_FS" : \
-	                    op_type == TYPE_F4 ? "TYPE_F4" : "UNKNOWN"); \
 	        idx++; \
 	    } while(0)
 
@@ -808,9 +789,6 @@ static void __attribute__((constructor)) init_opcode_table(void)
 	#undef X
 
 	    opcode_table_count = idx;
-
-	    GPGPU_INFO("Total entries initialized: %ld", opcode_table_count);
-	    GPGPU_INFO("================================");
 	}
 
 static opcode_entry_t *lookup_opcode(uint32_t inst)
@@ -823,12 +801,11 @@ static opcode_entry_t *lookup_opcode(uint32_t inst)
 	    return NULL;
 	}
 
-/* Only least instructions to pass the test are implemented */
 static int exec_one_inst(GPGPUState *s, GPGPUWarp *warp, uint32_t inst)
 {
 	    const opcode_entry_t *entry = lookup_opcode(inst);
 	    if (!entry) {
-	        GPGPU_ERR("\t[KERNEL]: ERROR - Unsupported instruction: 0x%08x\n", inst);
+	        VPU_EVENT(event_ring, EVENT_ERROR_EVENT, VPU_ERR_ILLEGAL_INST, inst);
 	        return -1;
 	    }
 
@@ -852,7 +829,6 @@ static int exec_one_inst(GPGPUState *s, GPGPUWarp *warp, uint32_t inst)
 
 	            // 检查是否是 ebreak 指令
 	            if (entry->match == MATCH_EBREAK) {
-	                // ebreak 指令：只清零当前 Lane 的 active_mask 位
 	                warp->active_mask &= ~(1 << lane);
 	                continue;
 	            }
@@ -862,9 +838,7 @@ static int exec_one_inst(GPGPUState *s, GPGPUWarp *warp, uint32_t inst)
 
 	            // 检查是否是 ret 指令（jalr x0, 0(x1)）
 	            if (entry->type == TYPE_I && (inst & 0x7f) == 0x67 && ctx.rd == 0 && ctx.rs1 == 1 && ctx.imm == 0) {
-	                // 检查 ra (x1) 是否为 0
 	                if (warp->lanes[lane].gpr[1].u32 == 0) {
-	                    // 清零该 Lane 的 active_mask 位
 	                    warp->active_mask &= ~(1 << lane);
 	                }
 	            }
@@ -876,9 +850,9 @@ static int exec_one_inst(GPGPUState *s, GPGPUWarp *warp, uint32_t inst)
 
 /* Initialize the warp */
 void gpgpu_core_init_warp(GPGPUWarp *warp, uint32_t pc,
-	                          uint32_t thread_id_base, const uint32_t block_id[3],
-	                          uint32_t num_threads,
-	                          uint32_t warp_id, uint32_t block_id_linear)
+		                          uint32_t thread_id_base, const uint32_t block_id[3],
+		                          uint32_t num_threads,
+		                          uint32_t warp_id, uint32_t block_id_linear)
 {
 	    memset(warp, 0, sizeof(*warp));
 
@@ -901,9 +875,7 @@ void gpgpu_core_init_warp(GPGPUWarp *warp, uint32_t pc,
 	        lane->pc = pc;
 	        lane->mhartid = MHARTID_ENCODE(block_id_linear, warp_id, i);
 	        lane->active = (warp->active_mask & (1 << i)) != 0;
-	        /* x0 is always 0 */
 	        lane->gpr[0].u32 = 0;
-	        /* f0 is always 0 */
 	        lane->fpr[0].u32 = 0;
 	    }
 	}
@@ -911,73 +883,44 @@ void gpgpu_core_init_warp(GPGPUWarp *warp, uint32_t pc,
 /* warp execution */
 int gpgpu_core_exec_warp(GPGPUState *s, GPGPUWarp *warp, uint32_t max_cycles)
 {
-	    // 计算活跃线程数量
-	    int num_threads = 0;
-	    for (int i = 0; i < GPGPU_WARP_SIZE; i++) {
-	        if (warp->active_mask & (1 << i)) {
-	            num_threads++;
-	        }
-	    }
-
-	    GPGPU_CORE("\t[KERNEL]: Starting warp execution, max_cycles=%u, active_mask=0x%x, num_threads=%d\n",
-	             max_cycles, warp->active_mask, num_threads);
 	    uint32_t cycles = 0;
 	    uint32_t last_pc = 0;
 
 	    while (cycles < max_cycles) {
-	        // 检查 active_mask 是否为 0
 	        if (warp->active_mask == 0) {
-	            GPGPU_CORE("\t[KERNEL]: Warp execution completed - all threads inactive\n");
 	            return 0;
 	        }
 
 	        uint32_t pc = warp->lanes[0].pc;
 	        if (pc >= s->vram_size) {
-	            GPGPU_ERR("\t[KERNEL]: ERROR - PC (0x%x) out of VRAM bounds (0x%lx)\n", pc, s->vram_size);
+	            VPU_EVENT(event_ring, EVENT_ERROR_EVENT, VPU_ERR_VRAM_FAULT, pc);
 	            return -1;
 	        }
 
-	        // 检测无限循环（如果 PC 没有变化）
 	        if (cycles > 0 && pc == last_pc) {
-	            GPGPU_CORE("\t[KERNEL]: Warp execution completed - detected infinite loop at PC 0x%x\n", pc);
-	            // 假设已经执行完所有有用的指令，进入了无限循环等待
 	            return 0;
 	        }
 	        last_pc = pc;
 
 	        uint32_t inst = *(uint32_t *)(s->vram_ptr + pc);
-	        GPGPU_CORE("\t[KERNEL]: Fetching instruction at PC 0x%x: 0x%08x\n", pc, inst);
 	        int ret = exec_one_inst(s, warp, inst);
 
 	        if (ret == 1) {
-	            GPGPU_CORE("\t[KERNEL]: Warp execution completed - instruction returned 1\n");
 	            return 0;
 	        } else if (ret == -1) {
-	            GPGPU_ERR("\t[KERNEL]: ERROR - Instruction execution failed\n");
 	            return -1;
 	        }
 
 	        cycles++;
-	        if (cycles % 1000 == 0) {
-	            GPGPU_CORE("\t[KERNEL]: Warp execution progress: %u/%u cycles\n", cycles, max_cycles);
-	        }
 	    }
 
-	    // 超出最大周期限制，设置 KERNEL_FAULT 错误状态
-	    GPGPU_ERR("\t[KERNEL]: ERROR - Warp execution timeout after %u cycles\n", max_cycles);
+	    VPU_EVENT(event_ring, EVENT_ERROR_EVENT, VPU_ERR_WARP_TIMEOUT, max_cycles);
 	    s->error_status |= GPGPU_ERR_KERNEL_FAULT;
 	    return -1;
 	}
 
 int gpgpu_core_exec_kernel(GPGPUState *s)
 {
-	    GPGPU_CORE("\t[KERNEL]: Starting kernel execution\n");
-	    GPGPU_CORE("\t[KERNEL]: Kernel address: 0x%lx\n", s->kernel.kernel_addr);
-	    GPGPU_CORE("\t[KERNEL]: Grid dimensions: (%u, %u, %u)\n",
-	             s->kernel.grid_dim[0], s->kernel.grid_dim[1], s->kernel.grid_dim[2]);
-	    GPGPU_CORE("\t[KERNEL]: Block dimensions: (%u, %u, %u)\n",
-	             s->kernel.block_dim[0], s->kernel.block_dim[1], s->kernel.block_dim[2]);
-
 	    uint32_t grid_dim[3] = {
 	        s->kernel.grid_dim[0],
 	        s->kernel.grid_dim[1],
@@ -991,20 +934,14 @@ int gpgpu_core_exec_kernel(GPGPUState *s)
 
 	    uint32_t kernel_addr = s->kernel.kernel_addr;
 	    uint32_t threads_per_block = block_dim[0] * block_dim[1] * block_dim[2];
-	    GPGPU_CORE("\t[KERNEL]: Threads per block: %u\n", threads_per_block);
-
-	    GPGPU_CORE("\t[KERNEL]: Total blocks: %u\n", grid_dim[0] * grid_dim[1] * grid_dim[2]);
 
 	    for (uint32_t z = 0; z < grid_dim[2]; z++) {
 	        for (uint32_t y = 0; y < grid_dim[1]; y++) {
 	            for (uint32_t x = 0; x < grid_dim[0]; x++) {
 	                uint32_t block_id[3] = {x, y, z};
 	                uint32_t block_id_linear = z * grid_dim[0] * grid_dim[1] + y * grid_dim[0] + x;
-	                GPGPU_CORE("\t[KERNEL]: Executing block (%u, %u, %u), linear_id=%u\n",
-	                         x, y, z, block_id_linear);
 
 	                uint32_t num_warps = (threads_per_block + GPGPU_WARP_SIZE - 1) / GPGPU_WARP_SIZE;
-	                GPGPU_CORE("\t[KERNEL]: Warps per block: %u\n", num_warps);
 
 	                for (uint32_t warp_id = 0; warp_id < num_warps; warp_id++) {
 	                    GPGPUWarp warp;
@@ -1013,26 +950,19 @@ int gpgpu_core_exec_kernel(GPGPUState *s)
 	                    if (num_threads > GPGPU_WARP_SIZE) {
 	                        num_threads = GPGPU_WARP_SIZE;
 	                    }
-	                    GPGPU_CORE("\t[KERNEL]: Initializing warp %u, threads=%u, base=%u\n",
-	                             warp_id, num_threads, thread_id_base);
 
 	                    gpgpu_core_init_warp(&warp, kernel_addr, thread_id_base,
 	                                        block_id, num_threads,
 	                                        warp_id, block_id_linear);
 
-	                    GPGPU_CORE("\t[KERNEL]: Executing warp %u in block (%u, %u, %u)\n",
-	                             warp_id, x, y, z);
 	                    int ret = gpgpu_core_exec_warp(s, &warp, 100000);
 	                    if (ret != 0) {
-	                        GPGPU_ERR("\t[KERNEL]: ERROR - Warp execution failed with code %d\n", ret);
+	                        VPU_EVENT(event_ring, EVENT_ERROR_EVENT, VPU_ERR_WARP_FAILED, ret);
 	                        return -1;
 	                    }
-	                    GPGPU_CORE("\t[KERNEL]: Warp %u completed successfully\n", warp_id);
 	                }
-	                GPGPU_CORE("\t[KERNEL]: Block (%u, %u, %u) completed\n", x, y, z);
 	            }
 	        }
 	    }
-	    GPGPU_CORE("\t[KERNEL]: Kernel execution completed successfully\n");
 	    return 0;
 	}

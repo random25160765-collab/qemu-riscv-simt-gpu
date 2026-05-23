@@ -1,5 +1,5 @@
 /*
- * QEMU Educational GPGPU Device
+ * VPU Memory Interface
  *
  * Copyright (c) 2024-2025
  *
@@ -7,10 +7,9 @@
  * See the COPYING file in the top-level directory.
  */
 
-#include "qemu/osdep.h"
-#include "qemu/log.h"
+#include <stdint.h>
 #include "gpgpu.h"
-#include "gpgpu_core.h"
+#include "platform/gpgpu_core.h"
 #include "memory.h"
 
 uint32_t gpu_read(GPGPUState *s, uint32_t addr, int len) {
@@ -30,7 +29,6 @@ uint32_t gpu_read(GPGPUState *s, uint32_t addr, int len) {
             case 0x34: return s->kernel.grid_dim[1];
             case 0x38: return s->kernel.grid_dim[2];
             default:
-                qemu_log_mask(LOG_GUEST_ERROR, "CTRL read unsupported: addr=0x%08x\n", addr);
                 return 0xFFFFFFFF;
         }
     }
@@ -54,7 +52,6 @@ void gpu_write(GPGPUState *s, uint32_t addr, int len, uint32_t data) {
             case 0x14: s->simt.block_id[1] = data; break;
             case 0x18: s->simt.block_id[2] = data; break;
             default:
-                qemu_log_mask(LOG_GUEST_ERROR, "CTRL write unsupported: addr=0x%08x, val=0x%08x\n", addr, data);
                 break;
         }
         return;
