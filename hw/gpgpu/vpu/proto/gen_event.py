@@ -12,7 +12,7 @@ EVENTS = [
     (0x02, "reg_read",        2, False),
     (0x03, "dma_start",       5, False),
     (0x04, "dma_complete",    1, False),
-    (0x05, "kernel_dispatch", 11, False),
+    (0x05, "kernel_dispatch", 7,  False),
     (0x06, "kernel_complete", 1, False),
     (0x07, "irq_fire",        2, False),
     (0x08, "error_event",     2, False),

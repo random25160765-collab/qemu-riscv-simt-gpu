@@ -297,6 +297,7 @@ int main(int argc, char **argv)
                                 s.kernel.block_dim[2]);
                     s.global_status = GPGPU_STATUS_BUSY;
                     int ret = gpgpu_core_exec_kernel(&s);
+                    s.global_status = GPGPU_STATUS_READY;
                     GPGPU_EVENT(s.slow_ring, EVENT_KERNEL_COMPLETE, ret);
                     ctrl->data[0] = ret;
                 }
