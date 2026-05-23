@@ -1,0 +1,203 @@
+#!/usr/bin/env python3
+"""main.py — VPU probe web: probe threads → raw_bus → parser → bus → SSE → browser."""
+
+import json
+import os
+import queue
+import sys
+import threading
+import time
+from http.server import HTTPServer, BaseHTTPRequestHandler
+
+BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.dirname(os.path.dirname(BACKEND_DIR)))
+
+from backend.probe.probe import run_probe
+from backend.parser.parser import parse_frame
+
+SCRIPT_DIR = BACKEND_DIR
+PLATFORM_DIR = os.path.dirname(os.path.dirname(SCRIPT_DIR))
+FRONTEND_DIR = os.path.join(PLATFORM_DIR, "frontend")
+
+PROBE_DIR = os.environ.get("VPU_PROBE_DIR", os.path.expanduser("~"))
+
+SOCK_CONFIG = [
+    (0, "slow", os.path.join(PROBE_DIR, "vpu_slow")),
+    (0, "fast", os.path.join(PROBE_DIR, "vpu_fast")),
+]
+
+raw_bus = queue.Queue()
+bus = queue.Queue()
+HTTP_PORT = 8080
+
+MIME = {
+    ".html": "text/html; charset=utf-8",
+    ".css":  "text/css; charset=utf-8",
+    ".js":   "application/javascript; charset=utf-8",
+}
+
+_sse_lock = threading.Lock()
+_sse_clients = []
+
+
+def _sse_add(client_q):
+    with _sse_lock:
+        _sse_clients.append(client_q)
+
+
+def _sse_remove(client_q):
+    with _sse_lock:
+        _sse_clients.remove(client_q)
+
+
+def _sse_broadcast(msg):
+    data = f"data: {msg}\n\n".encode()
+    with _sse_lock:
+        for q in _sse_clients:
+            try:
+                q.put_nowait(data)
+            except queue.Full:
+                pass
+
+
+class RequestHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        path = self.path.split("?")[0]
+
+        if path == "/events":
+            self._handle_sse()
+        elif path == "/":
+            self._serve_static("index.html")
+        elif path == "/style.css":
+            self._serve_static("style.css")
+        elif path.startswith("/js/"):
+            self._serve_static(path.lstrip("/"))
+        else:
+            self.send_error(404)
+
+    def _serve_static(self, rel_path):
+        filepath = os.path.join(FRONTEND_DIR, rel_path)
+        if not os.path.isfile(filepath):
+            self.send_error(404)
+            return
+        ext = os.path.splitext(rel_path)[1]
+        content_type = MIME.get(ext, "application/octet-stream")
+        with open(filepath, "rb") as f:
+            data = f.read()
+        self.send_response(200)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+    def _handle_sse(self):
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Connection", "keep-alive")
+        self.end_headers()
+
+        client_q = queue.Queue(maxsize=256)
+        _sse_add(client_q)
+        try:
+            while True:
+                data = client_q.get()
+                try:
+                    self.wfile.write(data)
+                    self.wfile.flush()
+                except (BrokenPipeError, ConnectionResetError):
+                    break
+        finally:
+            _sse_remove(client_q)
+
+    def log_message(self, fmt, *args):
+        pass
+
+
+def reader_thread(ring_type, sock_path):
+    """Socket → raw bytes. Fast ring sampled at 200ms."""
+
+    if ring_type == "fast":
+        def on_frame(data):
+            nonlocal last_sample
+            now = time.time()
+            if now - last_sample < 0.2:
+                return
+            last_sample = now
+            raw_bus.put((ring_type, data))
+        last_sample = 0.0
+    else:
+        def on_frame(data):
+            raw_bus.put((ring_type, data))
+
+    run_probe(sock_path, on_frame)
+
+
+def parser_thread():
+    """raw bytes → structured records."""
+    seq = 0
+    while True:
+        ring_type, data = raw_bus.get()
+        records = parse_frame(data)
+        for r in records:
+            r["vpu_id"] = 0
+            r["ring_type"] = ring_type
+            seq += 1
+            r["_seq"] = seq
+            bus.put(r)
+
+
+def consumer():
+    """Structured records → JSON → SSE broadcast."""
+    while True:
+        r = bus.get()
+        msg = json.dumps({
+            "vpu_id":    r["vpu_id"],
+            "ring_type": r["ring_type"],
+            "level":     r["level"],
+            "opcode":    r["opcode"],
+            "operands":  r["operands"],
+            "event":     r.get("event"),
+            "branch":    r.get("branch"),
+        })
+        _sse_broadcast(msg)
+
+
+def main():
+    server = HTTPServer(("0.0.0.0", HTTP_PORT), RequestHandler)
+    print(f"HTTP server listening on http://localhost:{HTTP_PORT}")
+
+    threads = []
+
+    for _, ring_type, sock_path in SOCK_CONFIG:
+        t = threading.Thread(
+            target=reader_thread,
+            args=(ring_type, sock_path),
+            daemon=True,
+        )
+        t.start()
+        threads.append(t)
+        print(f"reader [{ring_type}]: {sock_path}")
+
+    t = threading.Thread(target=parser_thread, daemon=True)
+    t.start()
+    threads.append(t)
+
+    t = threading.Thread(target=consumer, daemon=True)
+    t.start()
+    threads.append(t)
+
+    server_thread = threading.Thread(target=server.serve_forever, daemon=True)
+    server_thread.start()
+
+    print("Ready. Waiting for data...\n")
+
+    try:
+        while True:
+            time.sleep(0.5)
+    except KeyboardInterrupt:
+        print("\nStopped.")
+
+
+if __name__ == "__main__":
+    main()

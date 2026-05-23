@@ -1,0 +1,88 @@
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+    background: #0d1117;
+    color: #e6edf3;
+    font-family: "SF Mono", "Fira Code", "Cascadia Code", monospace;
+    font-size: 13px;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 6px 16px;
+    background: #161b22;
+    border-bottom: 1px solid #30363d;
+    flex-shrink: 0;
+}
+
+.header-title {
+    color: #8b949e;
+    flex: 1;
+}
+
+.status {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    display: inline-block;
+}
+.status.on  { background: #3fb950; box-shadow: 0 0 4px #3fb950; }
+.status.off { background: #f85149; }
+
+.counts {
+    color: #8b949e;
+}
+.counts span {
+    color: #58a6ff;
+    font-weight: bold;
+}
+
+main {
+    display: flex;
+    flex: 1;
+    gap: 1px;
+    background: #30363d;
+    overflow: hidden;
+}
+
+.panel {
+    flex: 1;
+    background: #0d1117;
+    overflow-y: auto;
+    padding: 4px 0;
+}
+
+#slow-panel { flex: 1; }
+#fast-panel { flex: 1; }
+
+.panel-title {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    padding: 4px 12px;
+    background: #161b22;
+    color: #8b949e;
+    font-size: 12px;
+    border-bottom: 1px solid #21262d;
+}
+
+.record {
+    padding: 1px 12px;
+    white-space: pre;
+    color: #7ee787;
+    line-height: 1.4;
+}
+
+.record:hover {
+    background: #1a2332;
+}
+
+.panel::-webkit-scrollbar { width: 6px; }
+.panel::-webkit-scrollbar-track { background: #0d1117; }
+.panel::-webkit-scrollbar-thumb { background: #30363d; border-radius: 3px; }

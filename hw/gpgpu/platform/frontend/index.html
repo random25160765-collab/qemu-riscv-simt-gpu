@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>VPU Monitor</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header>
+  <span id="vpu-label">VPU-0</span>
+  <span class="header-title">Ring Monitor</span>
+  <span id="status-dot" class="status off" title="disconnected"></span>
+  <span class="counts">
+    slow <span id="slow-count">0</span>
+    &nbsp;|&nbsp;
+    fast <span id="fast-count">0</span>
+  </span>
+</header>
+
+<main>
+  <section class="panel" id="slow-panel">
+    <div class="panel-title">Slow Ring — Control Events</div>
+    <div class="records" id="slow-records"></div>
+  </section>
+  <section class="panel" id="fast-panel">
+    <div class="panel-title">Fast Ring — Inst Trace (200ms)</div>
+    <div class="records" id="fast-records"></div>
+  </section>
+</main>
+
+<script type="module" src="js/app.js"></script>
+</body>
+</html>

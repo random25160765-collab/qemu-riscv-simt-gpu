@@ -3,6 +3,9 @@
 /.cache/
 /.vscode/
 *.pyc
+__pycache__/
+vpu_slow
+vpu_fast
 .sdk
 .stgit-*
 .git-submodule-status
