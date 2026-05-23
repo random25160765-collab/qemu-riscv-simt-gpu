@@ -8,9 +8,8 @@
  * 类型定义
  * ============================================================ */
 
-typedef void* GPGPUDevice;           // 设备句柄
-typedef void* GPGPUKernel;           // Kernel 句柄
-typedef void* GPGPUStream;           // 流句柄（预留）
+typedef void* GPGPUDevice;
+typedef void* GPGPUKernel;
 
 typedef enum {
     GPGPU_SUCCESS = 0,
@@ -59,25 +58,10 @@ GPGPUError gpgpuKernelLoadFromMemory(GPGPUDevice dev, GPGPUKernel *kernel,
  * Kernel 启动
  * ============================================================ */
 
-typedef struct {
-    uint32_t grid_dim[3];
-    uint32_t block_dim[3];
-    uint32_t shared_mem;
-} GPGPULaunchConfig;
-
 GPGPUError gpgpuLaunchKernel(GPGPUDevice dev, GPGPUKernel kernel,
                              uint32_t grid_x, uint32_t grid_y, uint32_t grid_z,
                              uint32_t block_x, uint32_t block_y, uint32_t block_z,
                              uint32_t shared_mem);
-
-/* ============================================================
- * 便捷宏
- * ============================================================ */
-
-#define GPGPU_KERNEL_LAUNCH(dev, kernel, grid, block, ...) \
-    do { \
-        gpgpuLaunchKernel(dev, kernel, grid, 1, 1, block, 1, 1, 0); \
-    } while(0)
 
 /* ============================================================
  * 预定义算子

@@ -19,7 +19,7 @@ int main() {
     usleep(10000);
     
     // 读取并写入 kernel
-    FILE *fp = fopen("bin/kernels/vector_add.bin", "rb");
+    FILE *fp = fopen("bin/kernel/vector_add.bin", "rb");
     fseek(fp, 0, SEEK_END);
     size_t size = ftell(fp);
     fseek(fp, 0, SEEK_SET);

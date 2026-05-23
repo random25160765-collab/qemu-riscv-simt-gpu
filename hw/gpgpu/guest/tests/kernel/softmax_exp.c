@@ -14,6 +14,7 @@
 #define OUTPUT_OFFSET   0x200000
 
 #define SOFTMAX_N 8
+#define MAX_SHOW      5
 
 void load_kernel(void *vram, const char *path, size_t *size) {
     FILE *fp = fopen(path, "rb");
@@ -31,7 +32,7 @@ void load_kernel(void *vram, const char *path, size_t *size) {
 void run_kernel(int fd, void *vram, const char *kernel_file, int num_elements) {
     size_t ksize;
     load_kernel(vram, kernel_file, &ksize);
-    
+
     struct gpgpu_kernel_params params = {
         .kernel_addr = 0,
         .grid_dim = {num_elements, 1, 1},
@@ -65,7 +66,7 @@ int main() {
     usleep(10000);
 
     float input[SOFTMAX_N], gpu_exp[SOFTMAX_N], gpu_softmax[SOFTMAX_N], expected[SOFTMAX_N];
-    
+
     srand(time(NULL));
     printf("Input data:\n");
     for (int i = 0; i < SOFTMAX_N; i++) {
@@ -87,7 +88,7 @@ int main() {
 
     // 启动 GPU kernel 计算 exp
     printf("\nLaunching GPU exp kernel...\n");
-    run_kernel(fd, vram, "bin/kernels/softmax_exp.bin", SOFTMAX_N);
+    run_kernel(fd, vram, "bin/kernel/softmax_exp.bin", SOFTMAX_N);
 
     // 读取 exp 结果
     memcpy(gpu_exp, vram + OUTPUT_OFFSET, sizeof(gpu_exp));
@@ -99,14 +100,18 @@ int main() {
 
     // 验证
     printf("\nResults:\n");
-    printf("Index   Input    GPU exp   GPU softmax  Expected  Match\n");
     int errors = 0;
     for (int i = 0; i < SOFTMAX_N; i++) {
         int match = (fabsf(gpu_softmax[i] - expected[i]) < 0.01f);
-        printf("%5d: %7.2f %9.4f %11.4f %9.4f   %s\n", 
-               i, input[i], gpu_exp[i], gpu_softmax[i], expected[i], match ? "OK" : "FAIL");
-        if (!match) errors++;
+        if (!match) {
+            if (errors < MAX_SHOW)
+                printf("%5d: %7.2f %9.4f %11.4f %9.4f   FAIL\n",
+                       i, input[i], gpu_exp[i], gpu_softmax[i], expected[i]);
+            errors++;
+        }
     }
+    if (errors > MAX_SHOW)
+        printf("  ... and %d more errors\n", errors - MAX_SHOW);
 
     printf("\n=== %s ===\n", errors == 0 ? "Test PASSED" : "Test FAILED");
 

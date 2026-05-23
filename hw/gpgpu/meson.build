@@ -10,4 +10,5 @@ system_ss.add(when: 'CONFIG_GPGPU', if_true: files(
     'gpgpu_log.c',
     'lpfp.c',
     'memory.c',
+    'proto.c',
 ))

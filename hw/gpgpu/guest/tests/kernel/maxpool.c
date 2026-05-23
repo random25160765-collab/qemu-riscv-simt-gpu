@@ -15,6 +15,7 @@
 
 #define H 4
 #define W 4
+#define MAX_SHOW    5
 
 void load_kernel(void *vram, const char *path, size_t *size) {
     FILE *fp = fopen(path, "rb");
@@ -57,7 +58,7 @@ int main() {
     usleep(10000);
 
     size_t ksize;
-    load_kernel(vram, "bin/kernels/maxpool.bin", &ksize);
+    load_kernel(vram, "bin/kernel/maxpool.bin", &ksize);
     printf("Loaded kernel: %zu bytes\n", ksize);
 
     // 准备测试数据
@@ -91,16 +92,16 @@ int main() {
     // 启动 kernel
     int threads_per_block = 256;
     // int num_blocks = (out_h * out_w + threads_per_block - 1) / threads_per_block;
-    
+
     struct gpgpu_kernel_params params = {
         .kernel_addr = 0,
         .grid_dim = {H, W, 1},  // 用 grid_dim 传递 H 和 W
         .block_dim = {threads_per_block, 1, 1},
     };
     printf("\nLaunching: grid=(%d,%d,1), block=(%d,1,1)\n", H, W, threads_per_block);
-    
+
     ioctl(fd, GPGPU_IOCTL_LAUNCH_PARAMS, &params);
-    
+
     __u32 status;
     ioctl(fd, GPGPU_IOCTL_WAIT_KERNEL, &status);
 
@@ -121,11 +122,14 @@ int main() {
     int errors = 0;
     for (int i = 0; i < out_h * out_w; i++) {
         if (fabsf(result[i] - expected[i]) > 0.01f) {
-            printf("  Mismatch at %d: expected %.2f, got %.2f\n", i, expected[i], result[i]);
+            if (errors < MAX_SHOW)
+                printf("  Mismatch at %d: expected %.2f, got %.2f\n", i, expected[i], result[i]);
             errors++;
         }
     }
 
+    if (errors > MAX_SHOW)
+        printf("  ... and %d more errors\n", errors - MAX_SHOW);
     printf("\n=== %s ===\n", errors == 0 ? "Test PASSED" : "Test FAILED");
 
     munmap(vram, VRAM_SIZE);

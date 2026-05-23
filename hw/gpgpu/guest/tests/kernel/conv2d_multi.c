@@ -7,6 +7,7 @@
 #include <string.h>
 #include <time.h>
 #include <math.h>
+#include <stdint.h>
 #include "gpgpu_ioctl.h"
 
 #define VRAM_SIZE       (64 * 1024 * 1024)
@@ -16,6 +17,7 @@
 #define C_IN       2
 #define K_SIZE     3
 #define C_OUT      2
+#define MAX_SHOW    5
 
 void load_kernel(void *vram, uint32_t offset, const char *path) {
     FILE *fp = fopen(path, "rb");
@@ -79,7 +81,7 @@ int main() {
     ioctl(fd, GPGPU_IOCTL_RESET, NULL);
     usleep(10000);
 
-    load_kernel(vram, 0x0000, "conv2d.bin");
+    load_kernel(vram, 0x0000, "bin/kernel/conv2d_multi.bin");
 
     int out_h = IN_H - K_SIZE + 1;
     int out_w = IN_W - K_SIZE + 1;
@@ -110,8 +112,8 @@ int main() {
 
     struct gpgpu_kernel_params params = {
         .kernel_addr = 0x0000,
-        .grid_dim = {IN_H, IN_W, C_IN},
-        .block_dim = {K_SIZE, C_OUT, 1},
+        .grid_dim = {total_blocks, 1, 1},
+        .block_dim = {out_w, 1, 1},
     };
 
     printf("\nLaunching: H=%d W=%d C_in=%d K=%d C_out=%d\n", IN_H, IN_W, C_IN, K_SIZE, C_OUT);
@@ -131,9 +133,13 @@ int main() {
     int errors = 0;
     for (int i = 0; i < out_size; i++) {
         if (fabsf(result[i] - expected[i]) > 0.1f) {
+            if (errors < MAX_SHOW)
+                printf("  Mismatch at %d: expected %.2f, got %.2f\n", i, expected[i], result[i]);
             errors++;
         }
     }
+    if (errors > MAX_SHOW)
+        printf("  ... and %d more errors\n", errors - MAX_SHOW);
     printf("\n=== %s ===\n", errors == 0 ? "Test PASSED" : "Test FAILED");
 
     free(input); free(weight); free(expected); free(result);

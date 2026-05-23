@@ -16,6 +16,7 @@
 #define MAT_M 4
 #define MAT_N 4
 #define MAT_K 4
+#define MAX_SHOW    5
 
 void cpu_matmul(float *A, float *B, float *C, int M, int N, int K) {
     for (int i = 0; i < M; i++) {
@@ -83,7 +84,7 @@ int main() {
     // 4. 加载 kernel
     printf("Step 4: Loading kernel...\n");
     size_t ksize;
-    load_kernel(vram, "bin/kernels/matmul.bin", &ksize);
+    load_kernel(vram, "bin/kernel/matmul.bin", &ksize);
     printf("  Loaded %zu bytes\n", ksize);
 
     // 5. 准备测试数据
@@ -155,17 +156,21 @@ int main() {
         float diff = C_gpu[i] - C_cpu[i];
         if (diff < 0) diff = -diff;
         if (diff > 0.01f) {
-            printf("  Mismatch at [%d]: CPU=%.2f, GPU=%.2f\n", i, C_cpu[i], C_gpu[i]);
+            if (errors < MAX_SHOW)
+                printf("  Mismatch at [%d]: CPU=%.2f, GPU=%.2f\n", i, C_cpu[i], C_gpu[i]);
             errors++;
         }
     }
 
+    if (errors > MAX_SHOW)
+        printf("  ... and %d more errors\n", errors - MAX_SHOW);
     if (errors == 0) {
         printf("  All results match!\n");
         printf("\n=== Test PASSED ===\n");
     } else {
         printf("  %d errors found\n", errors);
-        printf("\n=== Test FAILED ===\n");
+            if (errors < MAX_SHOW)
+                printf("\n=== Test FAILED ===\n");
     }
 
     // 清理

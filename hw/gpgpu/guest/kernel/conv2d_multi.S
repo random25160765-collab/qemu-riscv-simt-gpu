@@ -57,9 +57,6 @@ _start:
     addi a2, a2, 1
     
     /* 解码 block_id -> (out_c, out_y) */
-    div  a3, t2, a1         # out_y = block_id / out_h
-    rem  a4, t2, a1         # out_c = block_id % out_h ? 
-    /* 正确: out_c = block_id / out_h, out_y = block_id % out_h */
     div  a3, t2, a1         # a3 = out_c (block_id / out_h)
     rem  a4, t2, a1         # a4 = out_y (block_id % out_h)
     

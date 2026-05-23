@@ -1,9 +1,6 @@
 bin
-/toolchain/include/
-/toolchain/lib/
-/toolchain/riscv64-linux-gnu/
-/toolchain/riscv-python-sysroot/
 
+/toolchain/*
 !/toolchain/*.tar.gz
 !/toolchain/*.tgz
 !/toolchain/*.tar.bz2

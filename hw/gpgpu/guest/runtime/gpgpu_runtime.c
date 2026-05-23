@@ -10,7 +10,6 @@
 #include <math.h>
 
 #define VRAM_SIZE       (64 * 1024 * 1024)
-#define PARAM_OFFSET    0x800000
 
 typedef struct {
     int fd;
@@ -99,7 +98,7 @@ GPGPUError gpgpuMemcpy(GPGPUDevice dev, void *dst, const void *src,
         memcpy(dst, src, size);
         break;
     case GPGPU_MEMCPY_DEVICE_TO_HOST:
-        memcpy((void*)src, dst, size);  // 注意参数顺序
+        memcpy(dst, src, size);
         break;
     case GPGPU_MEMCPY_DEVICE_TO_DEVICE:
         memmove(dst, src, size);
@@ -185,10 +184,11 @@ GPGPUError gpgpuLaunchKernel(GPGPUDevice dev, GPGPUKernel kernel,
     }
     
     __u32 status;
-    if (ioctl(p->fd, GPGPU_IOCTL_WAIT_KERNEL, &status) < 0) {
+    int ret = ioctl(p->fd, GPGPU_IOCTL_WAIT_KERNEL, &status);
+    ioctl(p->fd, GPGPU_IOCTL_RESET, NULL);
+    if (ret < 0)
         return GPGPU_ERROR_TIMEOUT;
-    }
-    
+
     return GPGPU_SUCCESS;
 }
 
@@ -199,7 +199,7 @@ GPGPUError gpgpuLaunchKernel(GPGPUDevice dev, GPGPUKernel kernel,
 GPGPUError gpgpuLoadOperators(GPGPUDevice dev, GPGPUOperators *ops) {
     /* 优先使用环境变量 GPGPU_KERNEL_DIR，默认为 "bin/kernels"（项目根目录下） */
     const char *kdir = getenv("GPGPU_KERNEL_DIR");
-    if (!kdir) kdir = "bin/kernels";
+    if (!kdir) kdir = "bin/kernel";
 
     char path[512];
     GPGPUError err;

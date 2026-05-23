@@ -15,10 +15,18 @@ _start:
     addi t0, t0, 0x10       # t0 = 0x80000010
     lw   t2, 0(t0)          # t2 = blockIdx.x
 
+    /* 读取 N = grid_dim[0] */
+    lui  t0, 0x80000
+    addi t0, t0, 0x30
+    lw   t3, 0(t0)          # t3 = N
+
     /* 计算全局 ID = blockIdx.x * 256 + threadIdx.x */
-    addi t3, zero, 256      # t3 = 256
-    mul  t2, t2, t3
+    addi t4, zero, 256      # t4 = 256
+    mul  t2, t2, t4
     add  t1, t2, t1
+
+    /* 边界检查 */
+    bge  t1, t3, exit
 
     /* 计算数组偏移: global_id * 4 */
     slli t1, t1, 2
@@ -41,7 +49,7 @@ _start:
     add  t0, t0, t1
     fsw  f2, 0(t0)
 
-    /* 完成，直接 ebreak 退出 warp */
+exit:
     ebreak
 
     /* 确保 4 字节对齐 */

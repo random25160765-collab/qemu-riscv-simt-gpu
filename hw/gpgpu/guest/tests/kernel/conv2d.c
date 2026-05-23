@@ -17,6 +17,7 @@
 #define IN_H 5
 #define IN_W 5
 #define K_SIZE 3
+#define MAX_SHOW    5
 
 void load_kernel(void *vram, const char *path, size_t *size) {
     FILE *fp = fopen(path, "rb");
@@ -60,7 +61,7 @@ int main() {
     usleep(10000);
 
     size_t ksize;
-    load_kernel(vram, "bin/kernels/conv2d.bin", &ksize);
+    load_kernel(vram, "bin/kernel/conv2d.bin", &ksize);
     printf("Loaded kernel: %zu bytes\n", ksize);
 
     // 准备测试数据
@@ -112,9 +113,9 @@ int main() {
         .block_dim = {K_SIZE, 1, 1},
     };
     printf("\nLaunching: grid=(%d,%d,1), block=(%d,1,1)\n", IN_H, IN_W, K_SIZE);
-    
+
     ioctl(fd, GPGPU_IOCTL_LAUNCH_PARAMS, &params);
-    
+
     __u32 status;
     ioctl(fd, GPGPU_IOCTL_WAIT_KERNEL, &status);
 
@@ -134,17 +135,21 @@ int main() {
     int errors = 0;
     for (int i = 0; i < out_h * out_w; i++) {
         if (fabsf(result[i] - expected[i]) > 0.1f) {
-            printf("  Mismatch at %d: expected %.2f, got %.2f\n", i, expected[i], result[i]);
+            if (errors < MAX_SHOW)
+                printf("  Mismatch at %d: expected %.2f, got %.2f\n", i, expected[i], result[i]);
             errors++;
         }
     }
 
+    if (errors > MAX_SHOW)
+        printf("  ... and %d more errors\n", errors - MAX_SHOW);
     if (errors == 0) {
         printf("  All results match!\n");
         printf("\n=== Test PASSED ===\n");
     } else {
         printf("  %d errors found\n", errors);
-        printf("\n=== Test FAILED ===\n");
+            if (errors < MAX_SHOW)
+                printf("\n=== Test FAILED ===\n");
     }
 
     munmap(vram, VRAM_SIZE);

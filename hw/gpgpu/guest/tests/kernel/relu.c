@@ -13,6 +13,7 @@
 #define DATA_OFFSET     0x100000
 
 #define N 16  // 测试元素数量
+#define MAX_SHOW      5
 
 void load_kernel(void *vram, const char *path, size_t *size) {
     FILE *fp = fopen(path, "rb");
@@ -41,7 +42,7 @@ int main() {
 
     // 加载 kernel
     size_t ksize;
-    load_kernel(vram, "bin/kernels/relu.bin", &ksize);
+    load_kernel(vram, "bin/kernel/relu.bin", &ksize);
     printf("Loaded kernel: %zu bytes\n", ksize);
 
     // 准备测试数据
@@ -69,9 +70,9 @@ int main() {
         .block_dim = {N, 1, 1},
     };
     printf("\nLaunching: grid=(%d,1,1), block=(%d,1,1)\n", N, 256);
-    
+
     ioctl(fd, GPGPU_IOCTL_LAUNCH_PARAMS, &params);
-    
+
     __u32 status;
     ioctl(fd, GPGPU_IOCTL_WAIT_KERNEL, &status);
 
@@ -81,14 +82,18 @@ int main() {
 
     // 验证
     printf("\nResults:\n");
-    printf("Index   Input    GPU      Expected  Match\n");
     int errors = 0;
     for (int i = 0; i < N; i++) {
         int match = (fabsf(result[i] - expected[i]) < 0.01f);
-        printf("%5d: %7.2f %7.2f %7.2f   %s\n", 
-               i, data[i], result[i], expected[i], match ? "OK" : "FAIL");
-        if (!match) errors++;
+        if (!match) {
+            if (errors < MAX_SHOW)
+                printf("%5d: %7.2f %7.2f %7.2f   FAIL\n",
+                       i, data[i], result[i], expected[i]);
+            errors++;
+        }
     }
+    if (errors > MAX_SHOW)
+        printf("  ... and %d more errors\n", errors - MAX_SHOW);
 
     printf("\n=== %s ===\n", errors == 0 ? "Test PASSED" : "Test FAILED");
 
