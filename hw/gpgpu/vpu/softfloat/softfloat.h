@@ -111,6 +111,9 @@ static inline Int128 int128_lshift(Int128 a, int n) {
     val <<= n;
     return (Int128){ (uint64_t)val, (int64_t)(val >> 64) };
 }
+static inline bool int128_nonneg(Int128 a) { return a.hi >= 0; }
+static inline bool int128_nz(Int128 a) { return a.lo || a.hi; }
+
 #define INT128_MIN  int128_make128(0, INT64_MIN)
 #define INT128_MAX  int128_make128(UINT64_MAX, INT64_MAX)
 #define UINT128_MAX int128_make128(UINT64_MAX, -1)

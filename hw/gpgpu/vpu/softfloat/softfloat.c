@@ -83,6 +83,7 @@ this code that are retained.
 #include <float.h>
 #include <limits.h>
 #include <stdlib.h>
+#include <string.h>
 #include "softfloat.h"
 
 #define glue(x, y) x##y
@@ -101,6 +102,37 @@ this code that are retained.
     (((uint64_t)(fieldval) << (start)) & MAKE_64BIT_MASK(start, length))
 
 /* We only need stdlib for abort() */
+
+#define MIN(a, b) ((a) < (b) ? (a) : (b))
+#define MAX(a, b) ((a) > (b) ? (a) : (b))
+
+/* Standalone replacements for QEMU host-utils / glib */
+
+static inline int clz64(uint64_t val)
+{
+    return val ? __builtin_clzll(val) : 64;
+}
+
+static inline bool uadd64_overflow(uint64_t a, uint64_t b, uint64_t *result)
+{
+    return __builtin_uaddll_overflow(a, b, (unsigned long long *)result);
+}
+
+static inline bool usub64_overflow(uint64_t a, uint64_t b, uint64_t *result)
+{
+    return __builtin_usubll_overflow(a, b, (unsigned long long *)result);
+}
+
+#define g_assert(cond) ((void)0)
+#define g_assert_not_reached() abort()
+
+/* Long division: quotient = (nhi << 64 | nlo) / d, remainder = *r */
+static inline uint64_t udiv_qrnnd(uint64_t *r, uint64_t nhi, uint64_t nlo, uint64_t d)
+{
+    __uint128_t n = ((__uint128_t)nhi << 64) | nlo;
+    *r = (uint64_t)(n % d);
+    return (uint64_t)(n / d);
+}
 
 /*----------------------------------------------------------------------------
 | Primitive arithmetic functions, including multi-word arithmetic, and

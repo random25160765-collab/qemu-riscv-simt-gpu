@@ -2,14 +2,21 @@
 # Can be moved out of the QEMU tree as a whole directory.
 
 TARGET   = build/libvpu.a
+VPUEXE   = build/vpu
 BUILDDIR = build
 SRCS     = core/gpgpu_core.c core/memory.c core/proto.c core/lpfp.c ring/ring.c \
            softfloat/softfloat.c
 OBJS     = $(SRCS:%.c=$(BUILDDIR)/%.o)
 CFLAGS   = -Wall -Wextra -Wno-unused-parameter -O2 -g -std=gnu11 -I. -Icore -Iring -Iproto -Isoftfloat
+LDFLAGS  = -lm -lrt
+
+all: $(TARGET) $(VPUEXE)
 
 $(TARGET): $(OBJS)
 	ar rcs $@ $^
+
+$(VPUEXE): $(TARGET) $(BUILDDIR)/main.o
+	$(CC) -o $@ $(BUILDDIR)/main.o -L$(BUILDDIR) -lvpu -lm -lrt
 
 $(BUILDDIR)/%.o: %.c
 	@mkdir -p $(dir $@)
@@ -21,4 +28,4 @@ gen:
 clean:
 	rm -rf $(BUILDDIR) $(TARGET)
 
-.PHONY: clean gen
+.PHONY: all clean gen
