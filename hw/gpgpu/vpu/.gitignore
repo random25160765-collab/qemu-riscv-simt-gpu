@@ -1,2 +1,3 @@
-*.o
+build/
 libvpu.a
+__pycache__
