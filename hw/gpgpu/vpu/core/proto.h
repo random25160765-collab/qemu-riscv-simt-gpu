@@ -5,11 +5,9 @@
 #define GPGPU_PROTO_H
 
 #include <stdint.h>
+#include "ring/ring.h"
 #include "proto/pt_inst.h"
 #include "proto/pt_event.h"
-
-/* Forward declaration */
-typedef struct ring_buf ring_buf;
 
 /* Global ring buffer for control events (level=0x01, slow ring) */
 extern ring_buf *event_ring;
@@ -30,7 +28,7 @@ void vpu_event_write(ring_buf *ring, uint32_t event_code, ...);
 #define GPGPU_INST_BIN(inst_code, ...) \
     gpgpu_inst_trace_bin(inst_code, ##__VA_ARGS__)
 
-#define VPU_EVENT(ring, event_code, ...) \
+#define GPGPU_EVENT(ring, event_code, ...) \
     vpu_event_write(ring, event_code, ##__VA_ARGS__)
 
 #endif /* GPGPU_PROTO_H */

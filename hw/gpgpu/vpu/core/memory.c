@@ -8,8 +8,8 @@
  */
 
 #include <stdint.h>
-#include "gpgpu.h"
-#include "platform/gpgpu_core.h"
+#include "state.h"
+#include "gpgpu_core.h"
 #include "memory.h"
 
 uint32_t gpu_read(GPGPUState *s, uint32_t addr, int len) {

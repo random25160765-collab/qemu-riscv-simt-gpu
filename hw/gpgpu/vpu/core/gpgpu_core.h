@@ -1,5 +1,5 @@
 /*
- * VPU - RISC-V SIMT Core Header (standalone)
+ * GPGPU - RISC-V SIMT Core Header (standalone)
  *
  * Copyright (c) 2024-2025
  *
@@ -9,17 +9,15 @@
  * 简化的 RV32I 指令解释器，用于 GPU 核心模拟。
  */
 
-#ifndef VPU_CORE_H
-#define VPU_CORE_H
+#ifndef GPGPU_CORE_H
+#define GPGPU_CORE_H
 
 #include <stdint.h>
 #include <stdbool.h>
 
 /* TODO Phase 2: 替换为独立 softfloat 实现，去除 QEMU fpu/softfloat.h 依赖 */
-#include "fpu/softfloat.h"
-
-/* 前向声明 */
-typedef struct GPGPUState GPGPUState;
+#include "softfloat/softfloat.h"
+#include "state.h"
 
 /*
  * ============================================================================
@@ -132,14 +130,14 @@ typedef struct GPGPUWarp {
 
 /*
  * ============================================================================
- * VPU 错误码 (用于 EVENT_ERROR_EVENT 的 detail 字段)
+ * GPGPU 错误码 (用于 EVENT_ERROR_EVENT 的 detail 字段)
  * ============================================================================
  */
-#define VPU_ERR_VRAM_FAULT      0x01
-#define VPU_ERR_CSR_ACCESS      0x02
-#define VPU_ERR_ILLEGAL_INST    0x03
-#define VPU_ERR_WARP_TIMEOUT    0x04
-#define VPU_ERR_WARP_FAILED     0x05
+#define GPGPU_EVT_VRAM_FAULT      0x01
+#define GPGPU_EVT_CSR_ACCESS      0x02
+#define GPGPU_EVT_ILLEGAL_INST    0x03
+#define GPGPU_EVT_WARP_TIMEOUT    0x04
+#define GPGPU_EVT_WARP_FAILED     0x05
 
 /*
  * ============================================================================
@@ -156,4 +154,4 @@ int gpgpu_core_exec_warp(GPGPUState *s, GPGPUWarp *warp, uint32_t max_cycles);
 
 int gpgpu_core_exec_kernel(GPGPUState *s);
 
-#endif /* VPU_CORE_H */
+#endif /* GPGPU_CORE_H */

@@ -7,7 +7,7 @@
 #include <stdatomic.h>
 #include <sys/uio.h>
 
-typedef struct {
+typedef struct ring_buf {
     uint8_t *buf;
     size_t size;
     _Atomic uint32_t r;

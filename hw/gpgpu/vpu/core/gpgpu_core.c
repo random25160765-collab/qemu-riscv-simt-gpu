@@ -1,5 +1,5 @@
 /*
- * VPU - RISC-V SIMT Core Implementation
+ * GPGPU - RISC-V SIMT Core Implementation
  *
  * Copyright (c) 2024-2025
  *
@@ -10,7 +10,7 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <string.h>
-#include "gpgpu.h"
+#include "state.h"
 #include "gpgpu_core.h"
 #include "lpfp.h"
 #include "memory.h"
@@ -72,7 +72,7 @@ static uint32_t csr_read(GPGPULane *l, uint16_t csr_addr) {
         case CSR_FCSR:
             return l->fcsr;
         default:
-            VPU_EVENT(event_ring, EVENT_ERROR_EVENT, VPU_ERR_CSR_ACCESS, csr_addr);
+            GPGPU_EVENT(event_ring, EVENT_ERROR_EVENT, GPGPU_EVT_CSR_ACCESS, csr_addr);
             return 0;
     }
 }
@@ -90,10 +90,10 @@ static void csr_write(GPGPULane *l, uint16_t csr_addr, uint32_t val) {
             l->fcsr = val;
             break;
         case CSR_MHARTID:
-            VPU_EVENT(event_ring, EVENT_ERROR_EVENT, VPU_ERR_CSR_ACCESS, csr_addr);
+            GPGPU_EVENT(event_ring, EVENT_ERROR_EVENT, GPGPU_EVT_CSR_ACCESS, csr_addr);
             break;
         default:
-            VPU_EVENT(event_ring, EVENT_ERROR_EVENT, VPU_ERR_CSR_ACCESS, csr_addr);
+            GPGPU_EVENT(event_ring, EVENT_ERROR_EVENT, GPGPU_EVT_CSR_ACCESS, csr_addr);
             break;
     }
 }
@@ -805,7 +805,7 @@ static int exec_one_inst(GPGPUState *s, GPGPUWarp *warp, uint32_t inst)
 {
 	    const opcode_entry_t *entry = lookup_opcode(inst);
 	    if (!entry) {
-	        VPU_EVENT(event_ring, EVENT_ERROR_EVENT, VPU_ERR_ILLEGAL_INST, inst);
+	        GPGPU_EVENT(event_ring, EVENT_ERROR_EVENT, GPGPU_EVT_ILLEGAL_INST, inst);
 	        return -1;
 	    }
 
@@ -893,7 +893,7 @@ int gpgpu_core_exec_warp(GPGPUState *s, GPGPUWarp *warp, uint32_t max_cycles)
 
 	        uint32_t pc = warp->lanes[0].pc;
 	        if (pc >= s->vram_size) {
-	            VPU_EVENT(event_ring, EVENT_ERROR_EVENT, VPU_ERR_VRAM_FAULT, pc);
+	            GPGPU_EVENT(event_ring, EVENT_ERROR_EVENT, GPGPU_EVT_VRAM_FAULT, pc);
 	            return -1;
 	        }
 
@@ -914,7 +914,7 @@ int gpgpu_core_exec_warp(GPGPUState *s, GPGPUWarp *warp, uint32_t max_cycles)
 	        cycles++;
 	    }
 
-	    VPU_EVENT(event_ring, EVENT_ERROR_EVENT, VPU_ERR_WARP_TIMEOUT, max_cycles);
+	    GPGPU_EVENT(event_ring, EVENT_ERROR_EVENT, GPGPU_EVT_WARP_TIMEOUT, max_cycles);
 	    s->error_status |= GPGPU_ERR_KERNEL_FAULT;
 	    return -1;
 	}
@@ -957,7 +957,7 @@ int gpgpu_core_exec_kernel(GPGPUState *s)
 
 	                    int ret = gpgpu_core_exec_warp(s, &warp, 100000);
 	                    if (ret != 0) {
-	                        VPU_EVENT(event_ring, EVENT_ERROR_EVENT, VPU_ERR_WARP_FAILED, ret);
+	                        GPGPU_EVENT(event_ring, EVENT_ERROR_EVENT, GPGPU_EVT_WARP_FAILED, ret);
 	                        return -1;
 	                    }
 	                }

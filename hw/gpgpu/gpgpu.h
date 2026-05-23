@@ -13,6 +13,7 @@
 #include "hw/pci/pci_device.h"
 #include "hw/pci/pci_ids.h"
 #include "qom/object.h"
+#include "vpu/state.h"
 
 /*
  * ============================================================================

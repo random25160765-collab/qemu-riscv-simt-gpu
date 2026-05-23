@@ -2,13 +2,12 @@
 #define MEMORY_H
 
 #include <stdint.h>
+#include "state.h"
 #include "proto.h"
-
-typedef struct GPGPUState GPGPUState;
 
 static inline void out_of_bound(GPGPUState *s, uint32_t addr, int len) {
     if (addr + len > s->vram_size) {
-        VPU_EVENT(event_ring, EVENT_ERROR_EVENT, 0x01 /* VRAM_FAULT */, addr);
+        GPGPU_EVENT(event_ring, EVENT_ERROR_EVENT, 0x01 /* VRAM_FAULT */, addr);
     }
 }
 
