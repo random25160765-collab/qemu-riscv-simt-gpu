@@ -5,10 +5,10 @@ TARGET   = build/libvpu.a
 VPUEXE   = build/vpu
 BUILDDIR = build
 SRCS     = core/gpgpu_core.c core/memory.c core/proto.c core/lpfp.c ring/ring.c \
-           softfloat/softfloat.c
+           socket/probe.c softfloat/softfloat.c
 OBJS     = $(SRCS:%.c=$(BUILDDIR)/%.o)
-CFLAGS   = -Wall -Wextra -Wno-unused-parameter -O2 -g -std=gnu11 -I. -Icore -Iring -Iproto -Isoftfloat
-LDFLAGS  = -lm -lrt
+CFLAGS   = -Wall -Wextra -Wno-unused-parameter -O2 -g -std=gnu11 -pthread -I. -Icore -Iring -Iproto -Isoftfloat
+LDFLAGS  = -pthread -lm -lrt
 
 all: $(TARGET) $(VPUEXE)
 

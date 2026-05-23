@@ -31,6 +31,7 @@
 #include "ring/ring.h"
 #include "proto/pt_event.h"
 #include "core/proto.h"
+#include "socket/probe.h"
 
 /* Memory barriers for host standalone (no QEMU osdep.h).
  * Protocol:
@@ -248,6 +249,19 @@ int main(int argc, char **argv)
     gpgpu_inst_trace_set_ring(s.fast_ring);
     gpgpu_event_set_ring(s.slow_ring);
 
+    /* Init probe sockets */
+    ProbeConfig probe_cfg = {
+        .slow_path = "./vpu_slow",
+        .fast_path = "./vpu_fast",
+        .slow_ring = s.slow_ring,
+        .fast_ring = s.fast_ring,
+    };
+    if (probe_init(&probe_cfg) != 0) {
+        fprintf(stderr, "VPU: probe_init failed, continuing without probe\n");
+    } else {
+        probe_start();
+    }
+
     s.global_status = GPGPU_STATUS_READY;
 
     /* Main loop — vpu_should_exit is set by SIGTERM/SIGINT handler */
@@ -307,11 +321,40 @@ int main(int argc, char **argv)
                                 s.kernel.block_dim[0],
                                 s.kernel.block_dim[1],
                                 s.kernel.block_dim[2]);
+
+                    /* Diagnostics: dump VRAM key regions before kernel exec */
+                    uint32_t kern_addr = (uint32_t)s.kernel.kernel_addr;
+                    fprintf(stderr, "VPU_DIAG: kernel_addr=0x%x grid=(%u,%u,%u) block=(%u,%u,%u)\n",
+                            kern_addr, s.kernel.grid_dim[0], s.kernel.grid_dim[1],
+                            s.kernel.grid_dim[2], s.kernel.block_dim[0],
+                            s.kernel.block_dim[1], s.kernel.block_dim[2]);
+                    fprintf(stderr, "VPU_DIAG: VRAM[0]=%08x %08x %08x %08x\n",
+                            ((uint32_t*)s.vram_ptr)[0], ((uint32_t*)s.vram_ptr)[1],
+                            ((uint32_t*)s.vram_ptr)[2], ((uint32_t*)s.vram_ptr)[3]);
+                    fprintf(stderr, "VPU_DIAG: VRAM[0x100000]=%08x (float=%.6f) VRAM[0x100004]=%08x (float=%.6f)\n",
+                            ((uint32_t*)(s.vram_ptr + 0x100000))[0],
+                            ((float*)(s.vram_ptr + 0x100000))[0],
+                            ((uint32_t*)(s.vram_ptr + 0x100004))[0],
+                            ((float*)(s.vram_ptr + 0x100004))[0]);
+                    fprintf(stderr, "VPU_DIAG: VRAM[0x200000]=%08x (float=%.6f) VRAM[0x200004]=%08x (float=%.6f)\n",
+                            ((uint32_t*)(s.vram_ptr + 0x200000))[0],
+                            ((float*)(s.vram_ptr + 0x200000))[0],
+                            ((uint32_t*)(s.vram_ptr + 0x200004))[0],
+                            ((float*)(s.vram_ptr + 0x200004))[0]);
+
                     s.global_status = GPGPU_STATUS_BUSY;
                     int ret = gpgpu_core_exec_kernel(&s);
                     s.global_status = GPGPU_STATUS_READY;
                     GPGPU_EVENT(s.slow_ring, EVENT_KERNEL_COMPLETE, ret);
                     ctrl->data[0] = ret;
+
+                    /* Diagnostics: dump VRAM output region after kernel exec */
+                    fprintf(stderr, "VPU_DIAG: kernel ret=%d\n", ret);
+                    fprintf(stderr, "VPU_DIAG: VRAM[0x300000]=%08x (float=%.6f) VRAM[0x300004]=%08x (float=%.6f)\n",
+                            ((uint32_t*)(s.vram_ptr + 0x300000))[0],
+                            ((float*)(s.vram_ptr + 0x300000))[0],
+                            ((uint32_t*)(s.vram_ptr + 0x300004))[0],
+                            ((float*)(s.vram_ptr + 0x300004))[0]);
                 }
                 smp_wmb();
                 async_irq = true;
@@ -340,6 +383,7 @@ int main(int argc, char **argv)
     }
 
     /* Cleanup */
+    probe_stop();
     ring_buf_destroy(s.fast_ring);
     ring_buf_destroy(s.slow_ring);
     munmap(s.vram_ptr, s.vram_size);
