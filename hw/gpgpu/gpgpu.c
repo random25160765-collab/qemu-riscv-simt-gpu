@@ -70,8 +70,12 @@ static void gpgpu_send_cmd(GPGPUState *s, uint32_t cmd,
 static int gpgpu_wait_done(GPGPUState *s)
 {
     for (int i = 0; i < 10000000; i++) {
+        if (s->vpu_crashed) {
+            qemu_log("GPGPU: VPU crashed, aborting wait\n");
+            return -1;
+        }
         if (s->ctrl_ptr[VPU_CTRL_CMD_OFFSET / 4] == VPU_CMD_NOP) {
-            smp_rmb(); /* ensure we see VPU's data writes */
+            smp_rmb();
             return 0;
         }
     }
