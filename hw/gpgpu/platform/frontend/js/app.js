@@ -23,3 +23,20 @@ const stats = createStatsPanel(store, {
 connect("/events", store.append, stats.setStatus);
 
 document.getElementById("vpu-label").textContent = `VPU-${vpuId}`;
+
+const slider = document.getElementById("period-slider");
+const periodVal = document.getElementById("period-value");
+slider.addEventListener("input", () => {
+    periodVal.textContent = slider.value + "ms";
+});
+slider.addEventListener("change", async () => {
+    const ms = parseInt(slider.value, 10);
+    try {
+        await fetch("/set-period", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ period_ms: ms }),
+        });
+        periodVal.textContent = ms + "ms";
+    } catch (e) { console.error("set-period failed", e); }
+});

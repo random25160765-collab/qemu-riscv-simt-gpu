@@ -12,6 +12,10 @@
   <span id="vpu-label">VPU-0</span>
   <span class="header-title">Ring Monitor</span>
   <span id="status-dot" class="status off" title="disconnected"></span>
+  <label class="period-slider">
+    fast <input type="range" id="period-slider" min="1" max="2000" value="200" step="1">
+    <span id="period-value">200ms</span>
+  </label>
   <span class="counts">
     slow <span id="slow-count">0</span>
     &nbsp;|&nbsp;
@@ -25,7 +29,7 @@
     <div class="records" id="slow-records"></div>
   </section>
   <section class="panel" id="fast-panel">
-    <div class="panel-title">Fast Ring — Inst Trace (200ms)</div>
+    <div class="panel-title">Fast Ring — Inst Trace</div>
     <div class="records" id="fast-records"></div>
   </section>
 </main>

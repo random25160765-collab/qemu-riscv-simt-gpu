@@ -35,6 +35,22 @@ header {
 .status.on  { background: #3fb950; box-shadow: 0 0 4px #3fb950; }
 .status.off { background: #f85149; }
 
+.period-slider {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    color: #8b949e;
+    font-size: 12px;
+}
+.period-slider input[type="range"] {
+    width: 80px;
+    accent-color: #58a6ff;
+}
+.period-slider span {
+    color: #58a6ff;
+    min-width: 48px;
+}
+
 .counts {
     color: #8b949e;
 }

@@ -35,6 +35,7 @@ HTTP_PORT = 8080
 
 _counters = {"raw": 0, "parsed": 0, "sent": 0}
 _conn_state = {"slow": "waiting", "fast": "waiting"}
+_fast_sample_period = 0.2  # seconds, adjustable via /set-period
 
 MIME = {
     ".html": "text/html; charset=utf-8",
@@ -68,7 +69,9 @@ def _sse_broadcast(msg):
 
 class RequestHandler(BaseHTTPRequestHandler):
     def do_POST(self):
-        if self.path == "/debug-inject":
+        if self.path == "/set-period":
+            self._handle_set_period()
+        elif self.path == "/debug-inject":
             self._handle_debug_inject()
         else:
             self.send_error(404)
@@ -90,6 +93,17 @@ class RequestHandler(BaseHTTPRequestHandler):
             self._serve_static(path.lstrip("/"))
         else:
             self.send_error(404)
+
+    def _handle_set_period(self):
+        global _fast_sample_period
+        length = int(self.headers.get("Content-Length", 0))
+        body = json.loads(self.rfile.read(length))
+        period_ms = max(1, min(2000, int(body.get("period_ms", 200))))
+        _fast_sample_period = period_ms / 1000.0
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.end_headers()
+        self.wfile.write(json.dumps({"ok": True, "period_ms": period_ms}).encode())
 
     def _handle_debug_inject(self):
         length = int(self.headers.get("Content-Length", 0))
@@ -163,6 +177,7 @@ class RequestHandler(BaseHTTPRequestHandler):
                 "bus": bus.qsize(),
             },
             "sse_clients": len(_sse_clients),
+            "fast_sample_period_ms": int(_fast_sample_period * 1000),
         }
         body = json.dumps(status, indent=2).encode()
         self.send_response(200)
@@ -179,13 +194,13 @@ class RequestHandler(BaseHTTPRequestHandler):
 
 
 def reader_thread(ring_type, sock_path):
-    """Socket → raw bytes. Fast ring sampled at 200ms."""
+    """Socket → raw bytes. Fast ring sample period adjustable via /set-period."""
 
     if ring_type == "fast":
         def on_frame(data):
             nonlocal last_sample
             now = time.time()
-            if now - last_sample < 0.2:
+            if now - last_sample < _fast_sample_period:
                 return
             last_sample = now
             _counters["raw"] += 1
