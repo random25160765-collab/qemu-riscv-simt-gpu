@@ -4,6 +4,7 @@
 import json
 import os
 import queue
+import struct
 import sys
 import threading
 import time
@@ -28,7 +29,11 @@ SOCK_CONFIG = [
 
 raw_bus = queue.Queue()
 bus = queue.Queue()
+_STOP = object()
 HTTP_PORT = 8080
+
+_counters = {"raw": 0, "parsed": 0, "sent": 0}
+_conn_state = {"slow": "waiting", "fast": "waiting"}
 
 MIME = {
     ".html": "text/html; charset=utf-8",
@@ -61,11 +66,21 @@ def _sse_broadcast(msg):
 
 
 class RequestHandler(BaseHTTPRequestHandler):
+    def do_POST(self):
+        if self.path == "/debug-inject":
+            self._handle_debug_inject()
+        else:
+            self.send_error(404)
+
     def do_GET(self):
         path = self.path.split("?")[0]
 
-        if path == "/events":
+        if path == "/status":
+            self._handle_status()
+        elif path == "/events":
             self._handle_sse()
+        elif path == "/test" or path == "/test.html":
+            self._serve_static("test.html")
         elif path == "/":
             self._serve_static("index.html")
         elif path == "/style.css":
@@ -74,6 +89,26 @@ class RequestHandler(BaseHTTPRequestHandler):
             self._serve_static(path.lstrip("/"))
         else:
             self.send_error(404)
+
+    def _handle_debug_inject(self):
+        length = int(self.headers.get("Content-Length", 0))
+        body = json.loads(self.rfile.read(length))
+        ring_type = body.get("ring_type", "slow")
+        level = body.get("level", 0)
+        opcode = body.get("opcode", 19)
+        operands = body.get("operands", [0, 0, 0])
+        branch = body.get("branch", 0)
+
+        hdr = ((level & 0xF) << 28) | ((len(operands) & 0xF) << 24) | ((opcode & 0xFF) << 16) | (1 if branch else 0)
+        payload = struct.pack("<I", hdr)
+        for v in operands:
+            payload += struct.pack("<I", v)
+        raw_bus.put((ring_type, payload))
+
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.end_headers()
+        self.wfile.write(json.dumps({"ok": True, "ring_type": ring_type, "level": level, "opcode": opcode}).encode())
 
     def _serve_static(self, rel_path):
         filepath = os.path.join(FRONTEND_DIR, rel_path)
@@ -88,7 +123,10 @@ class RequestHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(data)))
         self.end_headers()
-        self.wfile.write(data)
+        try:
+            self.wfile.write(data)
+        except BrokenPipeError:
+            pass
 
     def _handle_sse(self):
         self.send_response(200)
@@ -110,6 +148,31 @@ class RequestHandler(BaseHTTPRequestHandler):
         finally:
             _sse_remove(client_q)
 
+    def _handle_status(self):
+        import os as _os
+        status = {
+            "sockets": {
+                "slow": {"path": SOCK_CONFIG[0][2], "exists": _os.path.exists(SOCK_CONFIG[0][2])},
+                "fast": {"path": SOCK_CONFIG[1][2], "exists": _os.path.exists(SOCK_CONFIG[1][2])},
+            },
+            "connection": dict(_conn_state),
+            "counters": dict(_counters),
+            "queues": {
+                "raw_bus": raw_bus.qsize(),
+                "bus": bus.qsize(),
+            },
+            "sse_clients": len(_sse_clients),
+        }
+        body = json.dumps(status, indent=2).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        try:
+            self.wfile.write(body)
+        except BrokenPipeError:
+            pass
+
     def log_message(self, fmt, *args):
         pass
 
@@ -124,10 +187,14 @@ def reader_thread(ring_type, sock_path):
             if now - last_sample < 0.2:
                 return
             last_sample = now
+            _counters["raw"] += 1
+            _conn_state[ring_type] = "connected"
             raw_bus.put((ring_type, data))
         last_sample = 0.0
     else:
         def on_frame(data):
+            _counters["raw"] += 1
+            _conn_state[ring_type] = "connected"
             raw_bus.put((ring_type, data))
 
     run_probe(sock_path, on_frame)
@@ -139,6 +206,7 @@ def parser_thread():
     while True:
         ring_type, data = raw_bus.get()
         records = parse_frame(data)
+        _counters["parsed"] += 1
         for r in records:
             r["vpu_id"] = 0
             r["ring_type"] = ring_type
@@ -151,6 +219,9 @@ def consumer():
     """Structured records → JSON → SSE broadcast."""
     while True:
         r = bus.get()
+        if r is _STOP:
+            break
+        _counters["sent"] += 1
         msg = json.dumps({
             "vpu_id":    r["vpu_id"],
             "ring_type": r["ring_type"],

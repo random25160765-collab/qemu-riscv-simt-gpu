@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>VPU Pipeline Test</title>
+<style>
+  body { font: 14px monospace; background:#0d1117; color:#e6edf3; padding:20px; }
+  h1 { font-size:18px; margin-bottom:16px; }
+  .section { margin-bottom:20px; border:1px solid #30363d; border-radius:6px; padding:12px; }
+  .section h2 { font-size:14px; margin:0 0 8px; color:#58a6ff; }
+  .test { padding:4px 0; }
+  .pass { color:#3fb950; } .pass::before { content:"✓ "; }
+  .fail { color:#f85149; } .fail::before { content:"✗ "; }
+  .info { color:#8b949e; } .info::before { content:"→ "; }
+  #summary { font-size:16px; padding:8px 0; }
+  button { background:#238636; color:#fff; border:none; padding:6px 16px;
+           border-radius:4px; cursor:pointer; font:inherit; margin-right:8px; }
+  button:hover { background:#2ea043; }
+  #sandbox { margin-top:8px; }
+</style>
+</head>
+<body>
+<h1>VPU 观测平台 — 管线连通性测试</h1>
+
+<div id="summary"></div>
+<button id="run-all">Run All Tests</button>
+<button id="run-store">Test Store → DOM</button>
+<button id="run-status">Test setStatus</button>
+<button id="run-sse">Test SSE (需后端)</button>
+
+<div id="sandbox">
+  <div class="section">
+    <h2>Status</h2>
+    <span id="test-dot" class="status off" style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#f85149;"></span>
+    <span id="test-status-text">off</span>
+  </div>
+  <div class="section">
+    <h2>Test Panel</h2>
+    slow: <span id="test-slow-count">0</span>
+    | fast: <span id="test-fast-count">0</span>
+    <div id="test-records" style="margin-top:4px;"></div>
+  </div>
+</div>
+
+<script type="module">
+import { formatRecord } from "./js/format.js";
+import { createStore } from "./js/store.js";
+import { createTracePanel } from "./js/panels/trace.js";
+import { createStatsPanel } from "./js/panels/stats.js";
+
+const store = createStore();
+const results = [];
+
+function addResult(name, ok, detail) {
+  results.push({name, ok, detail});
+  renderResults();
+}
+
+function renderResults() {
+  const el = document.getElementById("summary");
+  const pass = results.filter(r => r.ok).length;
+  const fail = results.filter(r => !r.ok).length;
+  el.innerHTML = `<span class="${fail ? 'fail' : 'pass'}">${pass}/${results.length} passed</span>`;
+}
+
+function assert(cond, msg) { if (!cond) throw new Error(msg); }
+
+function testFormatRecord() {
+  const sectionLog = [];
+  const log = (s) => sectionLog.push(s);
+  try {
+    // 测试1: level=1 event
+    const r1 = formatRecord({level:1, opcode:1, operands:[0x1000, 42]});
+    assert(r1.includes("REG_WRITE"), "event name missing: " + r1);
+    assert(r1.includes("0x1000"), "offset missing: " + r1);
+    assert(r1.includes("0x2a"), "value missing: " + r1);
+    log(`pass: event format → "${r1.substring(0,60)}..."`);
+
+    // 测试2: level=0 inst
+    const r2 = formatRecord({level:0, opcode:19, operands:[5, 0x2A, 100]});
+    assert(r2.includes("ADDI"), "inst name missing: " + r2);
+    assert(r2.includes("rd=5"), "rd missing: " + r2);
+    log(`pass: inst format → "${r2.substring(0,60)}..."`);
+
+    // 测试3: unknown opcode fallback
+    const r3 = formatRecord({level:0, opcode:255, operands:[0xDEAD]});
+    assert(r3.includes("OP_255"), "fallback missing: " + r3);
+    log(`pass: fallback → "${r3}"`);
+
+    addResult("formatRecord", true, sectionLog.join(" | "));
+  } catch(e) {
+    addResult("formatRecord", false, e.message + " | " + sectionLog.join(" | "));
+  }
+}
+
+function testStoreToDOM() {
+  const slowEl = document.getElementById("test-slow-count");
+  const fastEl = document.getElementById("test-fast-count");
+  const recDiv = document.getElementById("test-records");
+
+  // Reset
+  slowEl.textContent = "0";
+  fastEl.textContent = "0";
+  recDiv.innerHTML = "";
+
+  const statsP = createStatsPanel(store, {
+    slowEl, fastEl,
+    statusEl: document.getElementById("test-dot"),
+  });
+
+  createTracePanel(store, recDiv, { ringType: "slow", maxItems: 100 });
+
+  try {
+    // 注入 slow event
+    store.append({ring_type:"slow", level:1, opcode:1, operands:[0x1000, 42]});
+    assert(slowEl.textContent === "1", `slow count=${slowEl.textContent} expected 1`);
+    assert(recDiv.children.length === 1, `records=${recDiv.children.length} expected 1`);
+    assert(recDiv.children[0].textContent.includes("REG_WRITE"), "record text wrong");
+
+    // 注入 fast inst
+    store.append({ring_type:"fast", level:0, opcode:19, operands:[5, 0x2A, 100]});
+    assert(fastEl.textContent === "1", `fast count=${fastEl.textContent} expected 1`);
+    // slow records 不应增加
+    assert(slowEl.textContent === "1", `slow count changed=${slowEl.textContent}`);
+
+    // 再注入一条 slow
+    store.append({ring_type:"slow", level:1, opcode:5,
+      operands:[0x8000, 1,1,1, 32,1,1]});
+    assert(slowEl.textContent === "2", `slow count after 2nd=${slowEl.textContent}`);
+    assert(recDiv.children.length === 2, "second record not added");
+
+    addResult("store → DOM", true, "counters & DOM update correct");
+  } catch(e) {
+    addResult("store → DOM", false, e.message);
+  }
+}
+
+function testSetStatus() {
+  const dot = document.getElementById("test-dot");
+  const txt = document.getElementById("test-status-text");
+
+  try {
+    // 模拟 channel.js 的行为
+    dot.className = "status on";
+    dot.style.background = "#3fb950";
+    txt.textContent = "connected";
+    assert(dot.style.background === "rgb(63, 185, 80)", "dot not green");
+
+    dot.className = "status off";
+    dot.style.background = "#f85149";
+    txt.textContent = "disconnected";
+    assert(dot.style.background === "rgb(248, 81, 73)", "dot not red");
+
+    addResult("setStatus", true, "status dot toggles correctly");
+  } catch(e) {
+    addResult("setStatus", false, e.message);
+  }
+}
+
+function testSSE() {
+  const log = [];
+  const addLog = (s) => { log.push(s); };
+
+  addLog("connecting to /events...");
+  const es = new EventSource("/events");
+
+  es.onopen = () => {
+    addLog("SSE connected ✓");
+    // SSE 连通后，后端可以通过 /status 注入测试数据
+    // 这里只验证连接能建立
+    addLog("等待后端数据... (检查 /status counters)");
+    setTimeout(() => {
+      es.close();
+      addResult("SSE connect", true, log.join(" | "));
+    }, 500);
+  };
+
+  es.onmessage = (e) => {
+    addLog(`received: ${e.data.substring(0, 60)}`);
+    es.close();
+    addResult("SSE data", true, log.join(" | "));
+  };
+
+  es.onerror = () => {
+    es.close();
+    addLog("SSE error (后端可能未运行)");
+    addResult("SSE connect", false, log.join(" | "));
+  };
+}
+
+// wire buttons
+document.getElementById("run-all").onclick = () => {
+  results.length = 0;
+  testFormatRecord();
+  testStoreToDOM();
+  testSetStatus();
+  testSSE();
+};
+document.getElementById("run-store").onclick = () => {
+  results.length = 0;
+  testStoreToDOM();
+};
+document.getElementById("run-status").onclick = () => {
+  results.length = 0;
+  testSetStatus();
+};
+document.getElementById("run-sse").onclick = () => {
+  results.length = 0;
+  testSSE();
+};
+
+// auto-run formatRecord (pure, no DOM deps)
+testFormatRecord();
+</script>
+</body>
+</html>

@@ -8,7 +8,7 @@ export function connect(url, onRecord, onStatus) {
         try {
             const rec = JSON.parse(e.data);
             onRecord(rec);
-        } catch (_) { /* skip malformed */ }
+        } catch (err) { console.error("SSE parse error", err, e.data); }
     };
 
     return es;
