@@ -4,6 +4,7 @@
 import json
 import os
 import queue
+import signal
 import struct
 import sys
 import threading
@@ -235,8 +236,18 @@ def consumer():
 
 
 def main():
+    HTTPServer.allow_reuse_address = True
     server = HTTPServer(("0.0.0.0", HTTP_PORT), RequestHandler)
     print(f"HTTP server listening on http://localhost:{HTTP_PORT}")
+
+    shutdown_flag = threading.Event()
+
+    def _handle_signal(signum, frame):
+        print(f"\nSignal {signum} received, shutting down...")
+        shutdown_flag.set()
+
+    signal.signal(signal.SIGTERM, _handle_signal)
+    signal.signal(signal.SIGINT, _handle_signal)
 
     threads = []
 
@@ -264,10 +275,13 @@ def main():
     print("Ready. Waiting for data...\n")
 
     try:
-        while True:
-            time.sleep(0.5)
-    except KeyboardInterrupt:
-        print("\nStopped.")
+        while not shutdown_flag.wait(0.5):
+            pass
+    finally:
+        # socket.close() instead of server.shutdown(): shutdown() waits for
+        # all handlers to finish, but SSE handlers block forever on queue.get().
+        server.socket.close()
+        print("Stopped.")
 
 
 if __name__ == "__main__":
