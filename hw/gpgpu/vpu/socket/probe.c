@@ -83,28 +83,31 @@ static int send_frame(int fd, const uint8_t *data, size_t len)
     msg.msg_iovlen = 2;
 
     ssize_t sent = sendmsg(fd, &msg, MSG_NOSIGNAL);
-    if (sent < 0 && errno != EPIPE && errno != ECONNRESET) {
+    if (sent < 0) {
+        if (errno == EPIPE || errno == ECONNRESET)
+            return -2;  /* client disconnected */
         perror("probe: sendmsg");
         return -1;
     }
     return 0;
 }
 
-static void drain_and_send(ring_buf *rb, int client_fd)
+static int drain_and_send(ring_buf *rb, int client_fd)
 {
     struct iovec iov[2];
     int n = ring_buf_peek(rb, iov);
-    if (n <= 0) return;
+    if (n <= 0) return 0;
 
     size_t total = 0;
     for (int i = 0; i < n; i++)
         total += iov[i].iov_len;
 
-    if (total == 0) return;
+    if (total == 0) return 0;
 
+    int rc = 0;
     if (client_fd >= 0) {
         if (n == 1) {
-            send_frame(client_fd, iov[0].iov_base, iov[0].iov_len);
+            rc = send_frame(client_fd, iov[0].iov_base, iov[0].iov_len);
         } else {
             uint8_t buf[65536];
             size_t copy_len = total > sizeof(buf) ? sizeof(buf) : total;
@@ -115,11 +118,16 @@ static void drain_and_send(ring_buf *rb, int client_fd)
                 memcpy(buf + off, iov[i].iov_base, chunk);
                 off += chunk;
             }
-            send_frame(client_fd, buf, copy_len);
+            rc = send_frame(client_fd, buf, copy_len);
         }
     }
 
-    ring_buf_commit(rb, total);
+    /* Only commit if send succeeded. On disconnect (rc == -2), leave
+     * data in the ring so it can be sent to the next client. */
+    if (rc == 0)
+        ring_buf_commit(rb, total);
+
+    return rc;
 }
 
 static void *slow_thread_fn(void *arg)
@@ -128,7 +136,10 @@ static void *slow_thread_fn(void *arg)
     while (probe.running) {
         if (probe.slow_client < 0)
             probe.slow_client = accept_client(probe.slow_fd);
-        drain_and_send(probe.slow_ring, probe.slow_client);
+        if (drain_and_send(probe.slow_ring, probe.slow_client) == -2) {
+            close(probe.slow_client);
+            probe.slow_client = -1;
+        }
         usleep(1000);
     }
     return NULL;
@@ -140,7 +151,10 @@ static void *fast_thread_fn(void *arg)
     while (probe.running) {
         if (probe.fast_client < 0)
             probe.fast_client = accept_client(probe.fast_fd);
-        drain_and_send(probe.fast_ring, probe.fast_client);
+        if (drain_and_send(probe.fast_ring, probe.fast_client) == -2) {
+            close(probe.fast_client);
+            probe.fast_client = -1;
+        }
         usleep(1000);
     }
     return NULL;
