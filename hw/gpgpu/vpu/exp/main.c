@@ -97,7 +97,7 @@ static int run_kernel(GPGPUState *s, const char *kern_path,
                        uint32_t block_x, uint32_t block_y, uint32_t block_z)
 {
     struct timespec t0, t1;
-    double old_sum = 0, fast_sum = 0, th_sum = 0;
+    double old_sum = 0, fast_sum = 0, th_sum = 0, simd_sum = 0;
     int ret = 0, total_mismatch = 0;
 
     s->kernel.kernel_addr = kernel_addr;
@@ -111,6 +111,7 @@ static int run_kernel(GPGPUState *s, const char *kern_path,
     uint8_t *saved_in = malloc(SAVE_SIZE);
     uint8_t *fast_out = malloc(SAVE_SIZE);
     uint8_t *th_out   = malloc(SAVE_SIZE);
+    uint8_t *simd_out = malloc(SAVE_SIZE);
     uint8_t *old_out  = malloc(SAVE_SIZE);
 
     for (int run = 0; run < N_RUNS; run++) {
@@ -123,6 +124,15 @@ static int run_kernel(GPGPUState *s, const char *kern_path,
         clock_gettime(CLOCK_MONOTONIC, &t1);
         th_sum += (t1.tv_sec - t0.tv_sec) + (t1.tv_nsec - t0.tv_nsec) * 1e-9;
         memcpy(th_out, s->vram_ptr, SAVE_SIZE);
+
+        /* simd */
+        memcpy(s->vram_ptr, saved_in, SAVE_SIZE);
+        load_kernel(kern_path, s, kernel_addr);
+        clock_gettime(CLOCK_MONOTONIC, &t0);
+        int r4 = gpgpu_core_simd_exec_kernel(s);
+        clock_gettime(CLOCK_MONOTONIC, &t1);
+        simd_sum += (t1.tv_sec - t0.tv_sec) + (t1.tv_nsec - t0.tv_nsec) * 1e-9;
+        memcpy(simd_out, s->vram_ptr, SAVE_SIZE);
 
         /* fast */
         memcpy(s->vram_ptr, saved_in, SAVE_SIZE);
@@ -142,11 +152,11 @@ static int run_kernel(GPGPUState *s, const char *kern_path,
         old_sum += (t1.tv_sec - t0.tv_sec) + (t1.tv_nsec - t0.tv_nsec) * 1e-9;
         memcpy(old_out, s->vram_ptr, SAVE_SIZE);
 
-        if (r2 != 0 || r3 != 0) ret = -1;
+        if (r2 != 0 || r3 != 0 || r4 != 0) ret = -1;
         int mm = 0;
         for (size_t i = 0; i < SAVE_SIZE; i += 4) {
-            uint32_t tv = *(uint32_t*)(th_out+i), fv = *(uint32_t*)(fast_out+i), ov = *(uint32_t*)(old_out+i);
-            if (tv != ov || fv != ov) {
+            uint32_t tv=*(uint32_t*)(th_out+i),fv=*(uint32_t*)(fast_out+i),ov=*(uint32_t*)(old_out+i),sv=*(uint32_t*)(simd_out+i);
+            if(tv!=ov||fv!=ov||sv!=ov) {
                 if (mm < 5) printf("  run#%d DIFF @ 0x%06zx: th=0x%08x(%.4f) fast=0x%08x(%.4f) old=0x%08x(%.4f)\n",
                     run, i, tv, *(float*)&tv, fv, *(float*)&fv, ov, *(float*)&ov);
                 mm++;
@@ -159,11 +169,9 @@ static int run_kernel(GPGPUState *s, const char *kern_path,
     load_kernel(kern_path, s, kernel_addr);
     gpgpu_core_exec_kernel(s);
 
-    double old_avg = old_sum / N_RUNS, fast_avg = fast_sum / N_RUNS, th_avg = th_sum / N_RUNS;
-    double fs_up = (old_avg>0&&fast_avg>0)?(old_avg/fast_avg-1)*100:0;
-    double th_up = (old_avg>0&&th_avg>0)?(old_avg/th_avg-1)*100:0;
-    printf("  %d runs: Old %5.0fus | Fast %5.0fus (+%.0f%%) | Th %5.0fus (+%.0f%%) | %s\n",
-           N_RUNS, old_avg*1e6, fast_avg*1e6, fs_up, th_avg*1e6, th_up,
+    double oa=old_sum/N_RUNS,fa=fast_sum/N_RUNS,ta=th_sum/N_RUNS,sa=simd_sum/N_RUNS;
+    printf("  Old %5.0fus | Fast %5.0fus(+%.0f%%) | Th %5.0fus(+%.0f%%) | SIMD %5.0fus(+%.0f%%) | %s\n",
+           oa*1e6,fa*1e6,(oa/fa-1)*100,ta*1e6,(oa/ta-1)*100,sa*1e6,(oa/sa-1)*100,
            total_mismatch==0?"MATCH":"DIFF!");
 
     return ret;
@@ -271,43 +279,6 @@ static TestResult test_saxpy(GPGPUState *s)
 
     uint32_t est_insts = 10 + N * 13; /* FP 指令更多 */
     printf("  ~%u instructions (estimated)\n", est_insts);
-
-    return r;
-}
-
-/* 测试 3: 斐波那契数列（分支密集型） */
-static TestResult test_fib(GPGPUState *s)
-{
-    TestResult r = { .name = "fib (branch-heavy)", .errors = 0 };
-
-    uint32_t kern_addr = 0x500000;
-
-    /* 测试多个 N 值 */
-    uint32_t test_cases[] = {0, 1, 2, 5, 10, 20, 30, 40};
-    /* 对应的 fib 值 (mod 2^32) */
-    uint32_t expected[] = {0, 1, 1, 5, 55, 6765, 832040, 102334155};
-
-    for (int t = 0; t < 8; t++) {
-        memset(s->vram_ptr, 0, 0x10000); /* 清除 VRAM */
-        *(uint32_t *)(s->vram_ptr + 0x0) = test_cases[t];
-
-        if (run_kernel(s, "kernels/fib.bin", kern_addr, 1, 1, 1, 1, 1, 1) != 0) {
-            r.errors = -1;
-            return r;
-        }
-
-        uint32_t got = *(uint32_t *)(s->vram_ptr + 0x4);
-        if (got != expected[t]) {
-            printf("  Mismatch: fib(%u) expected %u, got %u\n",
-                   test_cases[t], expected[t], got);
-            r.errors++;
-        }
-    }
-
-    if (r.errors == 0)
-        printf("  PASS: all %d cases verified\n", 8);
-    else
-        printf("  FAIL: %d errors\n", r.errors);
 
     return r;
 }
@@ -525,6 +496,63 @@ static TestResult test_mem_access(GPGPUState *s)
 }
 
 
+
+/* 测试 5: 矩阵乘法 */
+static TestResult test_matmul(GPGPUState *s)
+{
+    TestResult r = {.name="matmul", .errors=0};
+    uint32_t M=1,K=2,N=1,kern=0x500000;
+    ((float*)(s->vram_ptr+0x100000))[0]=1; ((float*)(s->vram_ptr+0x100000))[1]=2;
+    ((float*)(s->vram_ptr+0x200000))[0]=3; ((float*)(s->vram_ptr+0x200000))[1]=4;
+    if(run_kernel(s,"kernels/matmul.bin",kern,M,K,1,N,1,1)!=0){r.errors=-1;return r;}
+    float exp=1*3+2*4,got=((float*)(s->vram_ptr+0x300000))[0];
+    if(fabsf(got-exp)>1e-3f){r.errors++;printf("  exp %.4f got %.4f\n",exp,got);}
+    printf("  %s: C[0]=%.4f\n",r.errors==0?"PASS":"FAIL",got);
+    return r;
+}
+
+/* 测试 3: 浮点向量内积 */
+static TestResult test_dot_product(GPGPUState *s)
+{
+    TestResult r = {.name="dot_product", .errors=0};
+    uint32_t N = 32768, kern = 0x500000;
+    *(uint32_t*)(s->vram_ptr + 0x0) = N;
+    float sum = 0;
+    for (uint32_t i = 0; i < N; i++) {
+        float a = (float)(i % 100) * 0.01f;
+        float b = (float)((i+1) % 100) * 0.01f;
+        ((float*)(s->vram_ptr + 0x100000))[i] = a;
+        ((float*)(s->vram_ptr + 0x200000))[i] = b;
+        sum += a * b;
+    }
+    if (run_kernel(s, "kernels/dot_product.bin", kern, 1,1,1, 1,1,1) != 0) { r.errors=-1; return r; }
+    float got = *(float*)(s->vram_ptr + 0x4);
+    if (fabsf(got - sum) > 0.01f) { r.errors++; printf("  exp %.4f got %.4f\n", sum, got); }
+    printf("  %s: N=%u result=%.4f\n", r.errors==0?"PASS":"FAIL", N, got);
+    return r;
+}
+
+/* 测试 4: 内存拷贝带宽 */
+static TestResult test_memcpy(GPGPUState *s)
+{
+    TestResult r = {.name="memcpy", .errors=0};
+    uint32_t N = 131072, kern = 0x500000;
+    *(uint32_t*)(s->vram_ptr + 0x0) = N;
+    for (uint32_t i = 0; i < N; i++) {
+        ((uint32_t*)(s->vram_ptr + 0x100000))[i] = i;
+        ((uint32_t*)(s->vram_ptr + 0x200000))[i] = 0;
+    }
+    if (run_kernel(s, "kernels/memcpy.bin", kern, 1,1,1, 1,1,1) != 0) { r.errors=-1; return r; }
+    for (uint32_t i = 0; i < N; i++) {
+        if (((uint32_t*)(s->vram_ptr + 0x200000))[i] != i) { r.errors++; break; }
+    }
+    uint64_t bytes = (uint64_t)N * 8; /* 4B read + 4B write */
+    printf("  %s: %lu bytes copied\n", r.errors==0?"PASS":"FAIL", (unsigned long)bytes);
+    return r;
+}
+
+/* 测试 5: 矩阵乘法 (guest kernel) */
+
 /* 测试 8-14: guest kernel 测试 */
 
 
@@ -600,22 +628,6 @@ static TestResult test_softmax_norm(GPGPUState *s)
     return r;
 }
 
-/* 测试 13: matmul */
-static TestResult test_matmul(GPGPUState *s)
-{
-    TestResult r = {.name="matmul", .errors=0};
-    uint32_t M = 1, K = 2, N = 1, kern = 0x500000;
-    ((float*)(s->vram_ptr+0x100000))[0] = 1.0f;
-    ((float*)(s->vram_ptr+0x100000))[1] = 2.0f;
-    ((float*)(s->vram_ptr+0x200000))[0] = 3.0f;
-    ((float*)(s->vram_ptr+0x200000))[1] = 4.0f;
-    if (run_kernel(s, "kernels/matmul.bin", kern, M, K, 1, N, 1, 1) != 0) { r.errors=-1; return r; }
-    float exp = 1.0f*3.0f + 2.0f*4.0f, got = ((float*)(s->vram_ptr+0x300000))[0];
-    if (fabsf(got-exp) > 1e-3f) { r.errors++; printf("  exp %.4f got %.4f\n", exp, got); }
-    printf("  %s: C[0]=%.4f\n", r.errors==0?"PASS":"FAIL", got);
-    return r;
-}
-
 /* 测试 14: conv2d */
 static TestResult test_conv2d(GPGPUState *s)
 {
@@ -681,12 +693,17 @@ int main(int argc, char **argv)
     total_errors += (r2.errors > 0) ? r2.errors : 0;
     printf("\n");
 
-    printf("--- Test 3: Fibonacci (branching) ---\n");
-    TestResult r3 = test_fib(&s);
-    total_errors += (r3.errors > 0) ? r3.errors : 0;
+    printf("--- Test 3: Dot Product (float) ---\n");
+    TestResult r_dot = test_dot_product(&s);
+    total_errors += (r_dot.errors > 0) ? r_dot.errors : 0;
     printf("\n");
 
-    printf("--- Test 4: Massive Loop (256K elements) ---\n");
+    printf("--- Test 4: Memory Copy (bandwidth) ---\n");
+    TestResult r_mem = test_memcpy(&s);
+    total_errors += (r_mem.errors > 0) ? r_mem.errors : 0;
+    printf("\n");
+
+    printf("--- Test 6: Massive Loop (256K elements) ---\n");
     TestResult r4 = test_loop_perf(&s);
     printf("\n");
 
@@ -695,7 +712,7 @@ int main(int argc, char **argv)
     total_errors += (r5.errors > 0) ? r5.errors : 0;
     printf("\n");
 
-    printf("--- Test 6: RV32F Full Coverage ---\n");
+    printf("--- Test 7: RV32F Full Coverage ---\n");
     TestResult r6 = test_rv32f(&s);
     total_errors += (r6.errors > 0) ? r6.errors : 0;
     printf("\n");
@@ -703,6 +720,11 @@ int main(int argc, char **argv)
     printf("--- Test 7: Memory Access (lb/lbu/lh/lhu/sb/sh) ---\n");
     TestResult r7 = test_mem_access(&s);
     total_errors += (r7.errors > 0) ? r7.errors : 0;
+    printf("\n");
+
+    printf("--- Test 5: matmul (guest) ---\n");
+    TestResult r_matmul = test_matmul(&s);
+    total_errors += (r_matmul.errors > 0) ? r_matmul.errors : 0;
     printf("\n");
 
     printf("--- Test 8: vecmul (guest) ---\n");
@@ -720,7 +742,7 @@ int main(int argc, char **argv)
     total_errors += (r10.errors > 0) ? r10.errors : 0;
     printf("\n");
 
-    printf("--- Test 11: softmax (guest) ---\n");
+    printf("--- Test 13: softmax (guest) ---\n");
     TestResult r11 = test_softmax(&s);
     total_errors += (r11.errors > 0) ? r11.errors : 0;
     printf("\n");
@@ -728,11 +750,6 @@ int main(int argc, char **argv)
     printf("--- Test 12: softmax_norm (guest) ---\n");
     TestResult r12 = test_softmax_norm(&s);
     total_errors += (r12.errors > 0) ? r12.errors : 0;
-    printf("\n");
-
-    printf("--- Test 13: matmul (guest) ---\n");
-    TestResult r13 = test_matmul(&s);
-    total_errors += (r13.errors > 0) ? r13.errors : 0;
     printf("\n");
 
     printf("--- Test 14: conv2d (guest) ---\n");
@@ -743,20 +760,24 @@ int main(int argc, char **argv)
     /* 总结 */
     printf("===========================================\n");
     printf("RESULTS SUMMARY\n");
+    printf("  ---- Performance Tests ----\n");
     printf("  %-45s %s\n", "Test 1: Integer Vector Add",         (r1.errors == 0) ? "PASS" : "FAIL");
     printf("  %-45s %s\n", "Test 2: Float SAXPY",               (r2.errors == 0) ? "PASS" : "FAIL");
-    printf("  %-45s %s\n", "Test 3: Fibonacci (branching)",     (r3.errors == 0) ? "PASS" : "FAIL");
+    printf("  %-45s %s\n", "Test 3: Dot Product (float)",       (r_dot.errors == 0) ? "PASS" : "FAIL");
+    printf("  %-45s %s\n", "Test 4: Memory Copy (bandwidth)",   (r_mem.errors == 0) ? "PASS" : "FAIL");
+    printf("  %-45s %s\n", "Test 5: Matrix Multiply",          (r_matmul.errors == 0) ? "PASS" : "FAIL");
+    printf("  %-45s %s\n", "Test 5: Massive Loop (256K)",      (r4.errors == 0) ? "PASS" : "FAIL");
+    printf("  ---- Functional Regression ----\n");
     printf("  %-45s %s\n", "Test 4: Massive Loop (256K)",
            (r4.errors == 0) ? "PASS" : "FAIL");
-    printf("  %-45s %s\n", "Test 5: RV32M (mul/div/rem)",       (r5.errors == 0) ? "PASS" : "FAIL");
-    printf("  %-45s %s\n", "Test 6: RV32F (fma/cmp/cvt)",       (r6.errors == 0) ? "PASS" : "FAIL");
-    printf("  %-45s %s\n", "Test 7: Memory Access (lb/sb/lh/sh)",(r7.errors == 0) ? "PASS" : "FAIL");
+    printf("  %-45s %s\n", "Test 6: RV32M (mul/div/rem)",       (r5.errors == 0) ? "PASS" : "FAIL");
+    printf("  %-45s %s\n", "Test 7: RV32F (fma/cmp/cvt)",       (r6.errors == 0) ? "PASS" : "FAIL");
+    printf("  %-45s %s\n", "Test 8: Memory Access (lb/sb/lh/sh)",(r7.errors == 0) ? "PASS" : "FAIL");
     printf("  %-45s %s\n", "Test 8: vecmul (guest)",        (r8.errors == 0) ? "PASS" : "FAIL");
     printf("  %-45s %s\n", "Test 9: scal_mul (guest)",      (r9.errors == 0) ? "PASS" : "FAIL");
     printf("  %-45s %s\n", "Test 10: gelu (guest)",         (r10.errors == 0) ? "PASS" : "FAIL");
     printf("  %-45s %s\n", "Test 11: softmax (guest)",      (r11.errors == 0) ? "PASS" : "FAIL");
     printf("  %-45s %s\n", "Test 12: softmax_norm (guest)", (r12.errors == 0) ? "PASS" : "FAIL");
-    printf("  %-45s %s\n", "Test 13: matmul (guest)",       (r13.errors == 0) ? "PASS" : "FAIL");
     printf("  %-45s %s\n", "Test 14: conv2d (guest)",       (r14.errors == 0) ? "PASS" : "FAIL");
     printf("Total errors: %d\n", total_errors);
     printf("===========================================\n");

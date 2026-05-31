@@ -160,8 +160,11 @@ int gpgpu_core_fast_exec_kernel(GPGPUState *s);
 
 /* 线索化解释器 API (预译码，goto **ip++ 零开销) */
 int gpgpu_core_threaded_exec_kernel(GPGPUState *s);
+int gpgpu_core_simd_exec_kernel(GPGPUState *s);
+int gpgpu_core_simd_exec_kernel(GPGPUState *s);
 
 /* 多线程线索化解释器 (pthread, 共享 VRAM) */
 int gpgpu_core_mt_exec_kernel(GPGPUState *s);
+
 
 #endif /* GPGPU_CORE_H */

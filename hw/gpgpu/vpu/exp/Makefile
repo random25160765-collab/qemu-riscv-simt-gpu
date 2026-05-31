@@ -17,7 +17,7 @@ RV_OBJCOPY = riscv64-unknown-elf-objcopy
 # ============================================================
 # 编译选项
 # ============================================================
-CFLAGS   = -Wall -Wextra -O2 -g
+CFLAGS   = -Wall -Wextra -O3 -mavx2 -g
 CFLAGS  += -I. -Icore -Iproto
 LDFLAGS  = -lm -lrt -lpthread
 
@@ -32,6 +32,7 @@ SRCS  = main.c
 SRCS += softfloat/softfloat.c
 SRCS += core/gpgpu_core.c
 SRCS += core/gpgpu_core_fast.c
+SRCS += core/gpgpu_core_simd.c
 SRCS += core/gpgpu_core_threaded.c
 SRCS += core/decode_trie.c
 SRCS += core/lpfp.c
