@@ -49,7 +49,7 @@ static inline ThOp *simd_predecode(SIMDDecoder *d, GPGPUState *s,
         code[i].rs3    = (int8_t)BITS(inst, 31, 27);
         code[i].branch_tgt = -1;
         if (id == 0) { code[i].handler = NULL; continue; }
-        code[i].handler = d->dispatch[id - 1];
+        code[i].handler = (void*)(uintptr_t)id;  /* store instr_id, exec_warp maps to handler */
         switch (inst & 0x7F) {
         case 0x37: case 0x17: code[i].imm = immU(inst); break;
         case 0x6F: code[i].imm = immJ(inst);

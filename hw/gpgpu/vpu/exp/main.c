@@ -157,8 +157,7 @@ static int run_kernel(GPGPUState *s, const char *kern_path,
         for (size_t i = 0; i < SAVE_SIZE; i += 4) {
             uint32_t tv=*(uint32_t*)(th_out+i),fv=*(uint32_t*)(fast_out+i),ov=*(uint32_t*)(old_out+i),sv=*(uint32_t*)(simd_out+i);
             if(tv!=ov||fv!=ov||sv!=ov) {
-                if (mm < 5) printf("  run#%d DIFF @ 0x%06zx: th=0x%08x(%.4f) fast=0x%08x(%.4f) old=0x%08x(%.4f)\n",
-                    run, i, tv, *(float*)&tv, fv, *(float*)&fv, ov, *(float*)&ov);
+                if (mm < 5) printf("  run#%d DIFF @ 0x%06zx: th=0x%08x fast=0x%08x old=0x%08x simd=0x%08x\n", run, i, tv, fv, ov, sv);
                 mm++;
             }
         }
@@ -181,49 +180,32 @@ static int run_kernel(GPGPUState *s, const char *kern_path,
  * 测试用例
  * ============================================================ */
 
-/* 测试 1: 整数向量加法 vector_add */
+/* 测试 1: 多 lane 整数向量加法 (vecmul kernel, block_dim=N) */
 static TestResult test_vector_add(GPGPUState *s)
 {
-    TestResult r = { .name = "vector_add (int add)", .errors = 0 };
-
-    uint32_t N = 65536; /* 64K 元素 */
+    TestResult r = { .name = "vecmul (multi-lane)", .errors = 0 };
+    uint32_t N = 2048; /* 2048 元素，32 lane × 64 warp */
     uint32_t kern_addr = 0x500000;
 
-    /* 写入测试数据 */
-    *(uint32_t *)(s->vram_ptr + 0x0) = N;
     for (uint32_t i = 0; i < N; i++) {
-        ((uint32_t *)(s->vram_ptr + 0x100000))[i] = i;
-        ((uint32_t *)(s->vram_ptr + 0x200000))[i] = i * 3 + 7;
-        ((uint32_t *)(s->vram_ptr + 0x300000))[i] = 0xDEADBEEF;
+        ((float*)(s->vram_ptr + 0x100000))[i] = (float)(i + 1);
+        ((float*)(s->vram_ptr + 0x200000))[i] = 2.0f;
     }
 
-    if (run_kernel(s, "kernels/vector_add.bin", kern_addr, 1, 1, 1, 1, 1, 1) != 0) {
-        r.errors = -1;
-        return r;
+    if (run_kernel(s, "kernels/vecmul.bin", kern_addr, 1, 1, 1, N, 1, 1) != 0) {
+        r.errors = -1; return r;
     }
 
-    /* 验证 */
     for (uint32_t i = 0; i < N; i++) {
-        uint32_t expected = i + (i * 3 + 7);
-        uint32_t got = ((uint32_t *)(s->vram_ptr + 0x300000))[i];
-        if (got != expected) {
-            if (r.errors < 10)
-                printf("  Mismatch at [%u]: expected %u, got %u\n", i, expected, got);
+        float expected = (float)(i + 1) * 2.0f;
+        float got = ((float*)(s->vram_ptr + 0x300000))[i];
+        if (fabsf(got - expected) > 1e-5f) {
+            if (r.errors < 5) printf("  [%u] exp %.1f got %.1f\n", i, expected, got);
             r.errors++;
         }
     }
-
-    if (r.errors == 0)
-        printf("  PASS: %u elements verified\n", N);
-    else
-        printf("  FAIL: %d errors / %u elements\n", r.errors, N);
-
-    /* 估计 IPS */
-    /* 每条循环迭代约 11 条指令 (load x3, slli x3, add x3, alu, sw, addi, bge, jal) */
-    /* 加上 prologue/epilogue: ~10 条指令 */
-    uint32_t est_insts = 10 + N * 11;
-    printf("  ~%u instructions (estimated)\n", est_insts);
-
+    if (r.errors == 0) printf("  PASS: %u elements (multi-lane)\n", N);
+    else printf("  FAIL: %d errors\n", r.errors);
     return r;
 }
 
@@ -283,25 +265,22 @@ static TestResult test_saxpy(GPGPUState *s)
     return r;
 }
 
-/* 测试 4: 大规模循环（纯吞吐量测试） */
+/* 测试 4: 多 lane 大规模吞吐量 */
 static TestResult test_loop_perf(GPGPUState *s)
 {
-    TestResult r = { .name = "massive_loop (256K)", .errors = 0 };
-    uint32_t N = 262144;
+    TestResult r = { .name = "massive (multi-lane)", .errors = 0 };
+    uint32_t N = 2048;
     uint32_t kern_addr = 0x500000;
 
-    *(uint32_t *)(s->vram_ptr + 0x0) = N;
-    for (uint32_t i = 0; i < 1024; i++) {
-        ((uint32_t *)(s->vram_ptr + 0x100000))[i] = i;
-        ((uint32_t *)(s->vram_ptr + 0x200000))[i] = i;
+    for (uint32_t i = 0; i < N; i++) {
+        ((float*)(s->vram_ptr + 0x100000))[i] = (float)(i % 256);
+        ((float*)(s->vram_ptr + 0x200000))[i] = 3.0f;
     }
 
-    if (run_kernel(s, "kernels/vector_add.bin", kern_addr, 1, 1, 1, 1, 1, 1) != 0) {
+    if (run_kernel(s, "kernels/vecmul.bin", kern_addr, 1, 1, 1, N, 1, 1) != 0) {
         r.errors = -1; return r;
     }
-
-    uint64_t est_insts = 10 + (uint64_t)N * 11;
-    printf("  ~%lu instructions\n", (unsigned long)est_insts);
+    printf("  ~%u elements (multi-lane)\n", N);
     return r;
 }
 
