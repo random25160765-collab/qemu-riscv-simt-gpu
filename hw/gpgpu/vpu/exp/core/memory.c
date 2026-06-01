@@ -9,6 +9,18 @@
 #include "memory.h"
 
 uint32_t gpu_read(GPGPUState *s, uint32_t addr, int len) {
+    /* Shared memory (0x80001000+) */
+    if (addr >= 0x80001000 && s->shm_ptr) {
+        uint32_t off = addr - 0x80001000;
+        if (off + len <= s->shm_size) {
+            switch (len) {
+                case 1: return *(uint8_t *)(s->shm_ptr + off);
+                case 2: return *(uint16_t *)(s->shm_ptr + off);
+                case 4: return *(uint32_t *)(s->shm_ptr + off);
+            }
+        }
+        return 0;
+    }
     /* CTRL 寄存器映射 (0x80000000 base) */
     if (addr >= GPGPU_CORE_CTRL_BASE) {
         switch (addr - GPGPU_CORE_CTRL_BASE) {
