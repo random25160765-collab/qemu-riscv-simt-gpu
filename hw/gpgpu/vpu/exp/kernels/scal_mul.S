@@ -1,19 +1,23 @@
 /*
- * scal_mul.S — 标量乘法
+ * scal_mul.S — 标量乘法 (标准 CUDA grid/block 模式)
  *   C[i] = alpha * A[i]
  *
- * 用于 attention scaling (Q / sqrt(d_k))、学习率缩放等场景。
+ * global_id = blockIdx.x * blockDim.x + threadIdx.x
+ * total     = gridDim.x  * blockDim.x
  *
- * 输入: A[N] @ 0x100000
- * 标量: alpha @ 0x400000 (float32)
+ * 输入: A[N] @ 0x100000, alpha @ 0x400000
  * 输出: C[N] @ 0x200000
- * 参数: grid_dim[0] = N
  */
 
 .section .text
 .globl _start
 
 _start:
+    /* blockDim.x */
+    lui  t0, 0x80000
+    addi t0, t0, 0x20
+    lw   t5, 0(t0)
+
     /* threadIdx.x */
     lui  t0, 0x80000
     lw   t1, 0(t0)
@@ -23,19 +27,19 @@ _start:
     addi t0, t0, 0x10
     lw   t2, 0(t0)
 
-    /* N = grid_dim[0] */
+    /* global_id = blockIdx.x * blockDim.x + threadIdx.x */
+    mul  t2, t2, t5
+    add  t4, t2, t1
+
+    /* N = gridDim.x * blockDim.x */
     lui  t0, 0x80000
     addi t0, t0, 0x30
     lw   t3, 0(t0)
+    mul  t3, t3, t5
 
-    /* global_id = blockIdx.x * 256 + threadIdx.x */
-    addi t4, zero, 256
-    mul  t2, t2, t4
-    add  t4, t2, t1
-
-    /* 加载 alpha 标量 */
+    /* 加载 alpha */
     lui  t0, 0x400
-    flw  f1, 0(t0)          /* f1 = alpha */
+    flw  f1, 0(t0)
 
     /* 边界检查 */
     bge  t4, t3, exit

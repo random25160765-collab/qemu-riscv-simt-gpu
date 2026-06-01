@@ -29,11 +29,9 @@ RV_CFLAGS += -Wl,--build-id=none
 # 源文件
 # ============================================================
 SRCS  = main.c
-SRCS += softfloat/softfloat.c
-SRCS += core/gpgpu_core.c
-SRCS += core/gpgpu_core_fast.c
-SRCS += core/gpgpu_core_simd.c
-SRCS += core/gpgpu_core_threaded.c
+SRCS += test_runner.c
+SRCS += core/engine.c
+SRCS += core/scheduler.c
 SRCS += core/decode_trie.c
 SRCS += core/lpfp.c
 SRCS += core/memory.c
