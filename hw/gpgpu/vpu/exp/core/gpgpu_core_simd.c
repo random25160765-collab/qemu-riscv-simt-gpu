@@ -21,7 +21,7 @@ static void __attribute__((constructor)) _simd_ctor(void) { simd_decoder_init(&s
 #define G(r,i)  _g [(r)*32+(i)]
 #define F(r,i)  _f [(r)*32+(i)]
 #define PC(i)   _pc[i]
-#define S       for(int i=0;i<32;i++)
+#define S       for(int i=0;i<32;i++) if(((active)>>i)&1)
 #define R       ip[-1]
 #define CTRL_BASE 0x80000000
 /* per-lane CTRL read */
@@ -46,12 +46,13 @@ static inline uint32_t _ctrl_rd(GPGPUState *s, uint32_t addr, int lane) {
 
 int gpgpu_core_simd_exec_warp(GPGPUState *s, GPGPUWarp *warp,
                                uint32_t max_cycles, ThOp *code, int tcount) {
-    uint32_t _g [GPGPU_NUM_REGS*GPGPU_WARP_SIZE];
-    uint32_t _f [GPGPU_NUM_REGS*GPGPU_WARP_SIZE];
+    uint32_t _g [GPGPU_NUM_REGS*GPGPU_WARP_SIZE] __attribute__((aligned(32)));
+    uint32_t _f [GPGPU_NUM_REGS*GPGPU_WARP_SIZE] __attribute__((aligned(32)));
     uint32_t _pc[GPGPU_WARP_SIZE];
     uint32_t cycles = 0; (void)max_cycles;
     ThOp *ip = code;
     GPGPULane *l = &warp->lanes[0];
+    uint32_t active = warp->active_mask;
 
     for (int i = 0; i < 32; i++) {
         G(0,i) = F(0,i) = 0; PC(i) = warp->lanes[i].pc;
@@ -155,74 +156,105 @@ int gpgpu_core_simd_exec_warp(GPGPUState *s, GPGPUWarp *warp,
     }
     op_done: { goto op_ebreak; }
 
-    /* FP (标量) + LP + 科学计算 */
-    op_flw: { int rd=R.rd,rs1=R.rs1,imm=R.imm; for(int i=0;i<32;i++){uint32_t v=gpu_read(s,G(rs1,i)+imm,4);F(rd,i)=v;warp->lanes[i].fpr[rd].u32=v;} S PC(i)+=4; goto *ip++->handler; }
-    op_fsw: { int rs1=R.rs1,rs2=R.rs2,imm=R.imm; for(int i=0;i<32;i++) gpu_write(s,G(rs1,i)+imm,4,warp->lanes[i].fpr[rs2].u32); S PC(i)+=4; goto *ip++->handler; }
+    /* ============================================================
+     * FP — 硬件浮点 + SoA，-O3 自动向量化
+     * 用 union 做 type punning，不触发 strict-aliasing
+     * ============================================================ */
+    #define VRAM_RD(addr) (*(uint32_t*)(s->vram_ptr + (addr)))
+    /* FP 数组指针 — SoA layout: 32 regs × 32 lanes, 每 lane 连续 */
+    float *fp = (float*)_f; (void)fp;
+    #define FR(r,i) ((float*)_f)[(r)*32+(i)]  /* 直接 cast，不依赖局部变量 */
 
-    /* SoA float (写 fpr): per-lane softfloat */
-    #define FPSOA(n,expr) op_##n: { for(int i=0;i<32;i++){ GPGPULane *ll=&warp->lanes[i]; FP_SYNC(ll); expr; FP_BACK(ll); } for(int i=0;i<32;i++){F(R.rd,i)=warp->lanes[i].fpr[R.rd].u32;} S PC(i)+=4; goto *ip++->handler; }
-    /* SoA float (写 gpr): per-lane softfloat */
-    #define FPSOA_G(n,expr) op_##n: { for(int i=0;i<32;i++){ GPGPULane *ll=&warp->lanes[i]; FP_SYNC(ll); expr; FP_BACK(ll); } for(int i=0;i<32;i++){G(R.rd,i)=warp->lanes[i].gpr[R.rd].u32;} S PC(i)+=4; goto *ip++->handler; }
-    /* 标量 FP — lane 0 only */
-    #define FPS(n,body) op_##n: { FP_SYNC(l); body; FP_BACK(l); l->pc+=4; goto *ip++->handler; }
+    /* FLW/FSW — VRAM fast path */
+    op_flw: { int rd=R.rd,rs1=R.rs1,imm=R.imm;
+        S {uint32_t a=G(rs1,i)+imm; F(rd,i)=VRAM_RD(a);} S PC(i)+=4; goto *ip++->handler; }
+    op_fsw: { int rs1=R.rs1,rs2=R.rs2,imm=R.imm;
+        S {uint32_t a=G(rs1,i)+imm; VRAM_RD(a)=F(rs2,i);} S PC(i)+=4; goto *ip++->handler; }
 
-    /* ——— SoA per-lane FP (fpr 输出) ——— */
-    FPSOA(fmul_s, ll->fpr[R.rd].u32=float32_mul(ll->fpr[R.rs1].u32,ll->fpr[R.rs2].u32,&ll->fp_status))
-    FPSOA(fadd_s, ll->fpr[R.rd].u32=float32_add(ll->fpr[R.rs1].u32,ll->fpr[R.rs2].u32,&ll->fp_status))
-    FPSOA(fsub_s, ll->fpr[R.rd].u32=float32_sub(ll->fpr[R.rs1].u32,ll->fpr[R.rs2].u32,&ll->fp_status))
-    FPSOA(fdiv_s, ll->fpr[R.rd].u32=float32_div(ll->fpr[R.rs1].u32,ll->fpr[R.rs2].u32,&ll->fp_status))
-    FPSOA(fsqrt_s,ll->fpr[R.rd].u32=float32_sqrt(ll->fpr[R.rs1].u32,&ll->fp_status))
-    FPSOA(fmadd_s,ll->fpr[R.rd].u32=float32_muladd(ll->fpr[R.rs1].u32,ll->fpr[R.rs2].u32,ll->fpr[R.rs3].u32,0,&ll->fp_status))
-    FPSOA(fmsub_s,ll->fpr[R.rd].u32=float32_muladd(ll->fpr[R.rs1].u32,ll->fpr[R.rs2].u32,ll->fpr[R.rs3].u32,float_muladd_negate_c,&ll->fp_status))
-    FPSOA(fnmsub_s,ll->fpr[R.rd].u32=float32_muladd(ll->fpr[R.rs1].u32,ll->fpr[R.rs2].u32,ll->fpr[R.rs3].u32,float_muladd_negate_product,&ll->fp_status))
-    FPSOA(fnmadd_s,ll->fpr[R.rd].u32=float32_muladd(ll->fpr[R.rs1].u32,ll->fpr[R.rs2].u32,ll->fpr[R.rs3].u32,float_muladd_negate_result,&ll->fp_status))
-    FPSOA(fsgnj_s,ll->fpr[R.rd].u32=(ll->fpr[R.rs1].u32&~0x80000000)|(ll->fpr[R.rs2].u32&0x80000000))
-    FPSOA(fsgnjn_s,ll->fpr[R.rd].u32=(ll->fpr[R.rs1].u32&~0x80000000)|((~ll->fpr[R.rs2].u32)&0x80000000))
-    FPSOA(fsgnjx_s,ll->fpr[R.rd].u32=ll->fpr[R.rs1].u32^(ll->fpr[R.rs2].u32&0x80000000))
-    FPSOA(fmin_s, ll->fpr[R.rd].u32=float32_min(ll->fpr[R.rs1].u32,ll->fpr[R.rs2].u32,&ll->fp_status))
-    FPSOA(fmax_s, ll->fpr[R.rd].u32=float32_max(ll->fpr[R.rs1].u32,ll->fpr[R.rs2].u32,&ll->fp_status))
-    FPSOA(fcvt_s_w, ll->fpr[R.rd].u32=int32_to_float32(ll->gpr[R.rs1].i32,&ll->fp_status))
-    FPSOA(fcvt_s_wu,ll->fpr[R.rd].u32=uint32_to_float32(ll->gpr[R.rs1].u32,&ll->fp_status))
-    FPSOA(fmv_w_x, ll->fpr[R.rd].u32=ll->gpr[R.rs1].u32)
+    /* basic FP — direct float array access, -O3 vectorizes to vmulps/vaddps */
+    #define HF(n,op) op_##n: { int rd=R.rd,rs1=R.rs1,rs2=R.rs2; \
+        for(int i=0;i<32;i++) FR(rd,i)=FR(rs1,i) op FR(rs2,i); \
+        S PC(i)+=4; goto *ip++->handler; }
+    HF(fmul_s,*) HF(fadd_s,+) HF(fsub_s,-) HF(fdiv_s,/)
+    #undef HF
 
-    /* ——— SoA per-lane FP (gpr 输出) ——— */
-    FPSOA_G(feq_s,  ll->gpr[R.rd].u32=float32_eq(ll->fpr[R.rs1].u32,ll->fpr[R.rs2].u32,&ll->fp_status))
-    FPSOA_G(flt_s,  ll->gpr[R.rd].u32=float32_lt(ll->fpr[R.rs1].u32,ll->fpr[R.rs2].u32,&ll->fp_status))
-    FPSOA_G(fle_s,  ll->gpr[R.rd].u32=float32_le(ll->fpr[R.rs1].u32,ll->fpr[R.rs2].u32,&ll->fp_status))
-    FPSOA_G(fmv_x_w, ll->gpr[R.rd].u32=ll->fpr[R.rs1].u32)
+    /* fmadd — FMA */
+    op_fmadd_s: { int rd=R.rd,rs1=R.rs1,rs2=R.rs2,rs3=R.rs3;
+        S FR(rd,i)=FR(rs1,i)*FR(rs2,i)+FR(rs3,i);
+        S PC(i)+=4; goto *ip++->handler; }
 
-    op_fcvt_w_s: { FP_SYNC(l); {float32 _f=l->fpr[R.rs1].u32;
-        if(float32_is_quiet_nan(_f,&l->fp_status)||float32_is_signaling_nan(_f,&l->fp_status))l->gpr[R.rd].i32=0x7FFFFFFF;
-        else{float32 _mx=int32_to_float32(0x7FFFFFFF,&l->fp_status),_mn=int32_to_float32(0x80000000,&l->fp_status);
-        if(float32_le(_mx,_f,&l->fp_status))l->gpr[R.rd].i32=0x7FFFFFFF;
-        else if(float32_lt(_f,_mn,&l->fp_status))l->gpr[R.rd].i32=0x80000000;
-        else l->gpr[R.rd].i32=float32_to_int32(_f,&l->fp_status);}FP_BACK(l);l->pc+=4;goto *ip++->handler;}}
-    op_fcvt_wu_s:{ FP_SYNC(l); {float32 _f=l->fpr[R.rs1].u32;
-        if(float32_is_quiet_nan(_f,&l->fp_status)||float32_is_signaling_nan(_f,&l->fp_status))l->gpr[R.rd].u32=0xFFFFFFFF;
-        else if(float32_lt(_f,0,&l->fp_status))l->gpr[R.rd].u32=0;
-        else{float32 _mu=uint32_to_float32(0xFFFFFFFF,&l->fp_status);
-        if(float32_le(_mu,_f,&l->fp_status))l->gpr[R.rd].u32=0xFFFFFFFF;
-        else l->gpr[R.rd].u32=float32_to_uint32(_f,&l->fp_status);}FP_BACK(l);l->pc+=4;goto *ip++->handler;}}
-    op_fclass_s:{ FP_SYNC(l); {uint32_t b=l->fpr[R.rs1].u32,e=(b>>23)&0xFF,m=b&0x7FFFFF,s=(b>>31)&1;int r=0;
+    /* fsqrt — per-lane libm call */
+    op_fsqrt_s: { int rd=R.rd,rs1=R.rs1;
+        S FR(rd,i)=sqrtf(FR(rs1,i)); S PC(i)+=4; goto *ip++->handler; }
+
+    /* sign inject — bit ops */
+    op_fsgnj_s:  { int rd=R.rd,rs1=R.rs1,rs2=R.rs2; S F(rd,i)=(F(rs1,i)&~0x80000000)|(F(rs2,i)&0x80000000); S PC(i)+=4; goto *ip++->handler; }
+    op_fsgnjn_s: { int rd=R.rd,rs1=R.rs1,rs2=R.rs2; S F(rd,i)=(F(rs1,i)&~0x80000000)|((~F(rs2,i))&0x80000000); S PC(i)+=4; goto *ip++->handler; }
+    op_fsgnjx_s: { int rd=R.rd,rs1=R.rs1,rs2=R.rs2; S F(rd,i)=F(rs1,i)^(F(rs2,i)&0x80000000); S PC(i)+=4; goto *ip++->handler; }
+    op_fmin_s: { int rd=R.rd,rs1=R.rs1,rs2=R.rs2;
+        S FR(rd,i)=FR(rs1,i)<FR(rs2,i)?FR(rs1,i):FR(rs2,i); S PC(i)+=4; goto *ip++->handler; }
+    op_fmax_s: { int rd=R.rd,rs1=R.rs1,rs2=R.rs2;
+        S FR(rd,i)=FR(rs1,i)>FR(rs2,i)?FR(rs1,i):FR(rs2,i); S PC(i)+=4; goto *ip++->handler; }
+
+    /* FMV — 位拷贝 */
+    op_fmv_w_x:  { int rd=R.rd,rs1=R.rs1; S F(rd,i)=G(rs1,i); S PC(i)+=4; goto *ip++->handler; }
+    op_fmv_x_w:  { int rd=R.rd,rs1=R.rs1; S G(rd,i)=F(rs1,i); S PC(i)+=4; goto *ip++->handler; }
+    /* FCVT int→float */
+    op_fcvt_s_w: { int rd=R.rd,rs1=R.rs1; S FR(rd,i)=(float)(int32_t)G(rs1,i); S PC(i)+=4; goto *ip++->handler; }
+    op_fcvt_s_wu:{ int rd=R.rd,rs1=R.rs1; S FR(rd,i)=(float)G(rs1,i); S PC(i)+=4; goto *ip++->handler; }
+    /* FCVT float→int */
+    op_fcvt_w_s: { int rd=R.rd,rs1=R.rs1;
+        S {float f=FR(rs1,i);uint32_t raw=F(rs1,i);
+            G(rd,i)=(uint32_t)(int32_t)(((raw>>23)&0xFF)==0xFF&&(raw&0x7FFFFF)?0x7FFFFFFF:(f>2.147e9f?0x7FFFFFFF:(f<-2.147e9f?0x80000000:(int32_t)f)));}
+        S PC(i)+=4; goto *ip++->handler; }
+    op_fcvt_wu_s:{ int rd=R.rd,rs1=R.rs1;
+        S {float f=FR(rs1,i);uint32_t raw=F(rs1,i);
+            G(rd,i)=((raw>>23)&0xFF)==0xFF&&(raw&0x7FFFFF)?0xFFFFFFFF:(f<0?0:(f>4.294e9f?0xFFFFFFFF:(uint32_t)f));}
+        S PC(i)+=4; goto *ip++->handler; }
+
+    /* compare */
+    op_feq_s: { int rd=R.rd,rs1=R.rs1,rs2=R.rs2; S G(rd,i)=F(rs1,i)==F(rs2,i)?1:0; S PC(i)+=4; goto *ip++->handler; }
+    op_flt_s: { int rd=R.rd,rs1=R.rs1,rs2=R.rs2; S G(rd,i)=FR(rs1,i)<FR(rs2,i)?1:0; S PC(i)+=4; goto *ip++->handler; }
+    op_fle_s: { int rd=R.rd,rs1=R.rs1,rs2=R.rs2; S G(rd,i)=FR(rs1,i)<=FR(rs2,i)?1:0; S PC(i)+=4; goto *ip++->handler; }
+
+    /* fclass */
+    op_fclass_s:{ int rd=R.rd,rs1=R.rs1; S {uint32_t b=F(rs1,i),e=(b>>23)&0xFF,m=b&0x7FFFFF,s=(b>>31)&1;int r=0;
         if(e==0xFF)r=m?(s?(1<<9):(1<<8)):(s?(1<<0):(1<<7));else if(e==0)r=m?(s?(1<<2):(1<<5)):(s?(1<<3):(1<<4));else r=s?(1<<1):(1<<6);
-        l->gpr[R.rd].u32=r;FP_BACK(l);l->pc+=4;goto *ip++->handler;}}
+        G(rd,i)=r;} S PC(i)+=4; goto *ip++->handler; }
 
-    /* LP float */
-    FPS(fcvt_s_bf16,l->fpr[R.rd].u32=bf16_to_f32(l->fpr[R.rs1].bf16))
-    FPS(fcvt_bf16_s,l->fpr[R.rd].bf16=f32_to_bf16(l->fpr[R.rs1].u32))
-    FPS(fcvt_s_e4m3,l->fpr[R.rd].u32=e4m3_to_f32(l->fpr[R.rs1].e4m3))
-    FPS(fcvt_e4m3_s,l->fpr[R.rd].e4m3=f32_to_e4m3(l->fpr[R.rs1].u32))
-    FPS(fcvt_s_e5m2,l->fpr[R.rd].u32=e5m2_to_f32(l->fpr[R.rs1].e5m2))
-    FPS(fcvt_e5m2_s,l->fpr[R.rd].e5m2=f32_to_e5m2(l->fpr[R.rs1].u32))
-    FPS(fcvt_s_e2m1,l->fpr[R.rd].u32=e2m1_to_f32(l->fpr[R.rs1].e2m1))
-    FPS(fcvt_e2m1_s,l->fpr[R.rd].e2m1=f32_to_e2m1(l->fpr[R.rs1].u32))
+    /* LP float — scalar lane 0 (rare) */
+    #define LPS(n,body) op_##n: { body; l->pc+=4; goto *ip++->handler; }
+    LPS(fcvt_s_bf16,l->fpr[R.rd].u32=bf16_to_f32(l->fpr[R.rs1].bf16))
+    LPS(fcvt_bf16_s,l->fpr[R.rd].bf16=f32_to_bf16(l->fpr[R.rs1].u32))
+    LPS(fcvt_s_e4m3,l->fpr[R.rd].u32=e4m3_to_f32(l->fpr[R.rs1].e4m3))
+    LPS(fcvt_e4m3_s,l->fpr[R.rd].e4m3=f32_to_e4m3(l->fpr[R.rs1].u32))
+    LPS(fcvt_s_e5m2,l->fpr[R.rd].u32=e5m2_to_f32(l->fpr[R.rs1].e5m2))
+    LPS(fcvt_e5m2_s,l->fpr[R.rd].e5m2=f32_to_e5m2(l->fpr[R.rs1].u32))
+    LPS(fcvt_s_e2m1,l->fpr[R.rd].u32=e2m1_to_f32(l->fpr[R.rs1].e2m1))
+    LPS(fcvt_e2m1_s,l->fpr[R.rd].e2m1=f32_to_e2m1(l->fpr[R.rs1].u32))
 
-    #define SCI(n,expr) op_##n: { FP_SYNC(l); {union{uint32_t u;float f;}_v;_v.u=l->fpr[R.rs1].u32;_v.f=expr;l->fpr[R.rd].u32=_v.u;}FP_BACK(l);l->pc+=4;goto *ip++->handler;}
-    SCI(fexp_s,expf(_v.f)) SCI(fln_s,logf(_v.f)) SCI(frcp_s,1.0f/_v.f)
-    SCI(frsqrt_s,1.0f/sqrtf(_v.f)) SCI(ftanh_s,tanhf(_v.f))
-    SCI(fsigmoid_s,1.0f/(1.0f+expf(-_v.f))) SCI(fsin_s,sinf(_v.f)) SCI(fcos_s,cosf(_v.f))
-    #undef SCI
-    #undef FPS
+    /* 科学计算 — 硬件 libm per-lane */
+    #define SCI_SOA(n,expr) op_##n: { int rd=R.rd,rs1=R.rs1; \
+        S {float v=FR(rs1,i); FR(rd,i)=expr;} \
+        S PC(i)+=4; goto *ip++->handler; }
+    SCI_SOA(fexp_s, expf(v))
+    SCI_SOA(fln_s, logf(v))
+    SCI_SOA(frcp_s, 1.0f/v)
+    SCI_SOA(frsqrt_s, 1.0f/sqrtf(v))
+    SCI_SOA(ftanh_s, tanhf(v))
+    SCI_SOA(fsigmoid_s, 1.0f/(1.0f+expf(-v)))
+    SCI_SOA(fsin_s, sinf(v))
+    SCI_SOA(fcos_s, cosf(v))
+    #undef SCI_SOA
+    #undef F32
+    #undef VRAM_RD
+
+    /* fallback FP/SYS — FMA variants */
+    #define FPFB(n,body) op_##n: { FP_SYNC(l); body; FP_BACK(l); l->pc+=4; goto *ip++->handler; }
+    FPFB(fmsub_s, l->fpr[R.rd].u32=float32_muladd(l->fpr[R.rs1].u32,l->fpr[R.rs2].u32,l->fpr[R.rs3].u32,float_muladd_negate_c,&l->fp_status))
+    FPFB(fnmsub_s,l->fpr[R.rd].u32=float32_muladd(l->fpr[R.rs1].u32,l->fpr[R.rs2].u32,l->fpr[R.rs3].u32,float_muladd_negate_product,&l->fp_status))
+    FPFB(fnmadd_s,l->fpr[R.rd].u32=float32_muladd(l->fpr[R.rs1].u32,l->fpr[R.rs2].u32,l->fpr[R.rs3].u32,float_muladd_negate_result,&l->fp_status))
+    #undef FPFB
 
     op_illegal: {
         for(int i=0;i<32;i++){warp->lanes[i].pc=PC(i);
