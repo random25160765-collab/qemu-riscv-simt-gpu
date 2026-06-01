@@ -230,6 +230,94 @@ static void b_softmax(GPGPUState *s) {
 }
 
 /* ============================================================
+ * Native C vs Interpreter comparison
+ * ============================================================ */
+static void b_native_vs_interp(GPGPUState *s) {
+    uint32_t N = 65536, nw = N / 32;
+    struct timespec T0, T1;
+    for (uint32_t i = 0; i < N; i++) {
+        ((float*)(s->vram_ptr+0x100000))[i] = (float)(i % 256);
+        ((float*)(s->vram_ptr+0x200000))[i] = 3.0f;
+    }
+
+    /* interpreter (fused) */
+    s->fp_count = N;
+    clock_gettime(CLOCK_MONOTONIC, &T0);
+    s->kernel.kernel_addr = 0x500000;
+    s->kernel.grid_dim[0]=nw; s->kernel.grid_dim[1]=1; s->kernel.grid_dim[2]=1;
+    s->kernel.block_dim[0]=1;  s->kernel.block_dim[1]=1; s->kernel.block_dim[2]=1;
+    load_kernel("kernels/vecmul.bin", s, 0x500000);
+    scheduler_run_kernel(s);
+    clock_gettime(CLOCK_MONOTONIC, &T1);
+    double t_int = (T1.tv_sec-T0.tv_sec)+(T1.tv_nsec-T0.tv_nsec)*1e-9;
+
+    /* native C */
+    volatile float sum = 0;
+    clock_gettime(CLOCK_MONOTONIC, &T0);
+    for (uint32_t w = 0; w < nw; w++) {
+        uint32_t g[32*32] = {0};
+        for (int l = 0; l < 32; l++) g[6*32+l] = w*32 + l;
+        for (int i = 0; i < 32; i++) {
+            uint32_t t = g[6*32+i], off = t << 2;
+            float a = *(float*)(s->vram_ptr+0x100000+off);
+            float b = *(float*)(s->vram_ptr+0x200000+off);
+            *(float*)(s->vram_ptr+0x300000+off) = a * b;
+            sum += a * b;
+        }
+    }
+    clock_gettime(CLOCK_MONOTONIC, &T1);
+    double t_nat = (T1.tv_sec-T0.tv_sec)+(T1.tv_nsec-T0.tv_nsec)*1e-9;
+
+    printf("  Interpreter: %5.0fus  Native C: %5.0fus  Ratio: %.1fx\n",
+           t_int*1e6, t_nat*1e6, t_int/t_nat);
+    (void)sum;
+}
+
+static void b_native_matmul(GPGPUState *s) {
+    int M = 128, K = 128, N = 128;
+    *(uint32_t*)(s->vram_ptr) = K;
+    for (int i = 0; i < M*K; i++) ((float*)(s->vram_ptr+0x100000))[i] = 1.0f;
+    for (int i = 0; i < K*N; i++) ((float*)(s->vram_ptr+0x200000))[i] = 1.0f;
+
+    struct timespec T0, T1;
+
+    /* interpreter */
+    s->fp_count = (uint64_t)M*N*K*2;
+    clock_gettime(CLOCK_MONOTONIC, &T0);
+    s->kernel.kernel_addr=0x500000; s->kernel.grid_dim[0]=M;s->kernel.grid_dim[1]=1;s->kernel.grid_dim[2]=1;
+    s->kernel.block_dim[0]=N; s->kernel.block_dim[1]=1; s->kernel.block_dim[2]=1;
+    load_kernel("kernels/matmul.bin", s, 0x500000);
+    scheduler_run_kernel(s);
+    clock_gettime(CLOCK_MONOTONIC, &T1);
+    double ti = (T1.tv_sec-T0.tv_sec)+(T1.tv_nsec-T0.tv_nsec)*1e-9;
+
+    /* native C: i-k-j + restrict + accumulators */
+    volatile float sum = 0;
+    float *__restrict A = (float*)(s->vram_ptr+0x100000);
+    float *__restrict B = (float*)(s->vram_ptr+0x200000);
+    float *__restrict C = (float*)(s->vram_ptr+0x300000);
+    memset(C, 0, M*N*4);
+    clock_gettime(CLOCK_MONOTONIC, &T0);
+    for (int row = 0; row < M; row++) {
+        for (int k = 0; k < K; k++) {
+            float aik = A[row*K + k];
+            float *c_row = C + row*N;
+            float *b_row = B + k*N;
+            for (int col = 0; col < N; col++)
+                c_row[col] += aik * b_row[col];
+        }
+    }
+    /* sum for dead-code prevention */
+    for (int i = 0; i < M*N; i++) sum += C[i];
+    clock_gettime(CLOCK_MONOTONIC, &T1);
+    double tn = (T1.tv_sec-T0.tv_sec)+(T1.tv_nsec-T0.tv_nsec)*1e-9;
+
+    printf("  Interpreter: %5.0fus  Native C: %5.0fus  Ratio: %.1fx\n",
+           ti*1e6, tn*1e6, ti/tn);
+    (void)sum;
+}
+
+/* ============================================================
  * entry
  * ============================================================ */
 int test_runner_run(GPGPUState *s) {
@@ -257,6 +345,8 @@ int test_runner_run(GPGPUState *s) {
     BENCH("scal_mul 65536",b_scal_mul);
     BENCH("gelu 65536",    b_gelu);
     BENCH("softmax 256",   b_softmax);
+    BENCH("native vs interp", b_native_vs_interp);
+    BENCH("native matmul", b_native_matmul);
 
     printf("\n===========================================\n");
     printf("Total errors: %d\n", total_errors);

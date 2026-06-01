@@ -344,6 +344,12 @@ int main(int argc, char **argv)
 
                     s.global_status = GPGPU_STATUS_BUSY;
                     int ret = gpgpu_core_exec_kernel(&s);
+                    /* Ensure all VRAM stores from kernel execution are globally
+                     * visible before we write the completion status and signal
+                     * QEMU via eventfd.  Without this fence the stores could
+                     * still be sitting in the store buffer when QEMU reads the
+                     * result buffer through the shared-memory mapping. */
+                    smp_wmb();
                     s.global_status = GPGPU_STATUS_READY;
                     GPGPU_EVENT(s.slow_ring, EVENT_KERNEL_COMPLETE, ret);
                     ctrl->data[0] = ret;

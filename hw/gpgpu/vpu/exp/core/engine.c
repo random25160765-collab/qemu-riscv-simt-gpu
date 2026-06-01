@@ -451,6 +451,32 @@ int engine_exec(ThOp *code, int tcount, const EngineContext *ctx,
     }
 
     /* ============================================================
+     * fused_matmul_loop — DFG 融合 matmul 整个 K 循环
+     * params[0]=K, [1]=N (B column stride), [2]=a_base, [3]=b_base
+     * rs1=row_reg, rs2=col_reg, rd=acc_reg
+     * ============================================================ */
+    op_fused_matmul_loop: {
+        int row_r = ip[-1].rs1, col_r = ip[-1].rs2, acc_r = ip[-1].rd;
+        int K = ip[-1].params[0], N_cols = ip[-1].params[1];
+        uint32_t a_base = (uint32_t)ip[-1].params[2];
+        uint32_t b_base = (uint32_t)ip[-1].params[3];
+        int skip = ip[-1].skip;
+        uint32_t row[32]; memcpy(row, &gpr[row_r * 32], 128);
+        uint32_t col[32]; memcpy(col, &gpr[col_r * 32], 128);
+        FOR_EACH_LANE {
+            float acc = FR(acc_r, _li);
+            for (int k = 0; k < K; k++) {
+                float aik = *(float*)(s->vram_ptr + a_base + (row[_li] * K + k) * 4);
+                float bkj = *(float*)(s->vram_ptr + b_base + (k * N_cols + col[_li]) * 4);
+                acc += aik * bkj;
+            }
+            FR(acc_r, _li) = acc;
+            PC(_li) += ip[-1].pc_advance;
+        }
+        ip += skip; goto *ip++->handler;
+    }
+
+    /* ============================================================
      * fused_ld2_fma — DFG 融合: load A+load B+fmadd (accumulate)
      * ============================================================ */
     op_fused_ld2_fma: {

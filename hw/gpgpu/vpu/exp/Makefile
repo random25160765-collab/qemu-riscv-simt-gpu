@@ -17,7 +17,7 @@ RV_OBJCOPY = riscv64-unknown-elf-objcopy
 # ============================================================
 # 编译选项
 # ============================================================
-CFLAGS   = -Wall -Wextra -O3 -march=native -g -fno-strict-aliasing
+CFLAGS   = -Wall -Wextra -O3 -mavx2 -g -fno-strict-aliasing
 CFLAGS  += -I. -Icore -Iproto
 LDFLAGS  = -lm -lrt -lpthread
 

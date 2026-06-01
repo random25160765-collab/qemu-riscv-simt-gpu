@@ -425,9 +425,13 @@ static void gpgpu_realize(PCIDevice *pdev, Error **errp)
                      PCI_BASE_ADDRESS_MEM_TYPE_64,
                      &s->ctrl_mmio);
 
-    /* BAR 2: VRAM (mapped from VPU shared memory) */
-    memory_region_init_ram_ptr(&s->vram, OBJECT(s), "gpgpu-vram",
-                               s->vram_size, s->vram_ptr);
+    /* BAR 2: VRAM (mapped from VPU shared memory)
+     * Use ram_device (not plain ram_ptr) — this forces handler-based access
+     * via ram_device_mem_ops which reads/writes ram_block->host directly.
+     * Plain ram_ptr relies on TCG softmmu direct mapping, which can bypass
+     * the shared-memory pages when the region is used as a PCI BAR. */
+    memory_region_init_ram_device_ptr(&s->vram, OBJECT(s), "gpgpu-vram",
+                                      s->vram_size, s->vram_ptr);
     pci_register_bar(pdev, 2,
                      PCI_BASE_ADDRESS_SPACE_MEMORY |
                      PCI_BASE_ADDRESS_MEM_TYPE_64 |

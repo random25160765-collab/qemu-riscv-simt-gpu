@@ -15,6 +15,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdio.h>
 #include <unistd.h>
 #include <pthread.h>
 #include "state.h"

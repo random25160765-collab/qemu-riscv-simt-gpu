@@ -140,7 +140,7 @@ static inline uint32_t pattern_to_match(const char *pattern) {
             } else { \
                 l->fp_status.float_rounding_mode = 0; /* RNE */ \
             } \
-            l->fp_status.float_exception_flags = 0; \
+            l->fp_status.float_exception_flags = float_flag_inexact; \
         } while(0); \
         code \
         /* sync_fp_status_to_fcsr */ \

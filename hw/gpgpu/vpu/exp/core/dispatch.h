@@ -114,7 +114,8 @@ typedef enum { TYPE_R, TYPE_I, TYPE_U, TYPE_S, TYPE_J, TYPE_B, TYPE_CSR, TYPE_FR
     X(fused_ld2_fma,   "0000000 00000 00000 000 00010 00010 11", TYPE_I, imm0); \
     X(fused_scal_mul,  "0000000 00000 00000 000 00011 00010 11", TYPE_I, imm0); \
     X(fused_gelu,      "0000000 00000 00000 000 00100 00010 11", TYPE_I, imm0); \
-    X(fused_softmax,   "0000000 00000 00000 000 00101 00010 11", TYPE_I, imm0)
+    X(fused_softmax,   "0000000 00000 00000 000 00101 00010 11", TYPE_I, imm0); \
+    X(fused_matmul_loop,"0000000 00000 00000 000 00110 00010 11", TYPE_I, imm0)
 
 static inline int32_t imm0(uint32_t i) { (void)i; return 0; }
 
