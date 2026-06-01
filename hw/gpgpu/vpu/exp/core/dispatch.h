@@ -1,6 +1,6 @@
 /*
  * dispatch.h — 指令表 + trie 构建 + dispatch 表填充宏
- * 被 gpgpu_core_simd.c include，不依赖其他解释器
+ * INSTRUCTION_LIST 唯一来源
  */
 #ifndef SIMD_DISPATCH_H
 #define SIMD_DISPATCH_H

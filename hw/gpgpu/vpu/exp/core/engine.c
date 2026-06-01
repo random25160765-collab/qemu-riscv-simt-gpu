@@ -418,10 +418,7 @@ int engine_exec(ThOp *code, int tcount, const EngineContext *ctx,
      * CSR 值存储在 gpr/fpr 之外的专用位置：引擎需要额外的 lane 状态指针。
      * 简化方案: 调度器传入 mhartid[] 和 fcsr[] 的 SoA 数组。
      *
-     * 但由于 GPGPULane 有 fp_status (softfloat 状态) 且 FP 指令需要它，
-     * 引擎实际上需要每 lane 的 fp_status。这很复杂。
-     *
-     * 当前简化：CSR 只操作 lane 0，依赖调度器保留的 warp->lanes[0]。
+     * CSR 只操作 lane 0 的 fcsr/mhartid，通过 SoA 数组 fcsr[]/mhartid[]。
      * 引擎需要额外的 lane 状态指针来做 CSR 操作。
      *
      * FIXME: 将 lane 元数据 (mhartid, fcsr, fp_status) 也 SoA 化。
