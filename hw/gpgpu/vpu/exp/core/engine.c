@@ -401,7 +401,7 @@ int engine_exec(ThOp *code, int tcount, const EngineContext *ctx,
         int rd = ip[-1].rd, rs1 = ip[-1].rs1, rs2 = ip[-1].rs2;
         FOR_EACH_LANE {
             int32_t a = (int32_t)GPR(rs1, _li), b = (int32_t)GPR(rs2, _li);
-            GPR(rd, _li) = b ? (uint32_t)(a / b) : (uint32_t)-1; PC(_li) += 4;
+            GPR(rd, _li) = b ? (uint32_t)((a == INT32_MIN && b == -1) ? INT32_MIN : a / b) : (uint32_t)-1; PC(_li) += 4;
         }
          goto *ip++->handler;
     }
@@ -417,7 +417,7 @@ int engine_exec(ThOp *code, int tcount, const EngineContext *ctx,
         int rd = ip[-1].rd, rs1 = ip[-1].rs1, rs2 = ip[-1].rs2;
         FOR_EACH_LANE {
             int32_t a = (int32_t)GPR(rs1, _li), b = (int32_t)GPR(rs2, _li);
-            GPR(rd, _li) = b ? (uint32_t)(a % b) : GPR(rs1, _li); PC(_li) += 4;
+            GPR(rd, _li) = b ? (uint32_t)((a == INT32_MIN && b == -1) ? 0 : a % b) : GPR(rs1, _li); PC(_li) += 4;
         }
          goto *ip++->handler;
     }
@@ -575,6 +575,78 @@ int engine_exec(ThOp *code, int tcount, const EngineContext *ctx,
     }
 
     /* ============================================================
+     * RV32A 原子指令 — 串行模式退化为普通 RMW
+     * ============================================================ */
+    op_lr_w: {
+        int rd = ip[-1].rd, rs1 = ip[-1].rs1;
+        FOR_EACH_LANE {
+            uint32_t a = GPR(rs1, _li);
+            GPR(rd, _li) = ctrl_read(ctx, a, _li);  /* load exclusive = normal load */
+            PC(_li) += 4;
+        }
+        goto *ip++->handler;
+    }
+    op_sc_w: {
+        int rd = ip[-1].rd, rs1 = ip[-1].rs1, rs2 = ip[-1].rs2;
+        FOR_EACH_LANE {
+            uint32_t a = GPR(rs1, _li);
+            gpu_write(s, a, 4, GPR(rs2, _li));
+            GPR(rd, _li) = 0;  /* always success */
+            PC(_li) += 4;
+        }
+        goto *ip++->handler;
+    }
+
+    #define AMO(name, op) \
+    op_##name: { \
+        int rd = ip[-1].rd, rs1 = ip[-1].rs1, rs2 = ip[-1].rs2; \
+        FOR_EACH_LANE { \
+            uint32_t a = GPR(rs1, _li); \
+            uint32_t old = ctrl_read(ctx, a, _li); \
+            gpu_write(s, a, 4, (old op GPR(rs2, _li))); \
+            GPR(rd, _li) = old; \
+            PC(_li) += 4; \
+        } \
+        goto *ip++->handler; \
+    }
+    AMO(amoadd_w, +)
+    #undef AMO
+
+    #define AMO2(name, expr) \
+    op_##name: { \
+        int rd = ip[-1].rd, rs1 = ip[-1].rs1, rs2 = ip[-1].rs2; \
+        FOR_EACH_LANE { \
+            uint32_t a = GPR(rs1, _li), v = GPR(rs2, _li); \
+            uint32_t old = ctrl_read(ctx, a, _li); \
+            gpu_write(s, a, 4, (uint32_t)expr); \
+            GPR(rd, _li) = old; \
+            PC(_li) += 4; \
+        } \
+        goto *ip++->handler; \
+    }
+    AMO2(amoxor_w,  old ^ v)
+    AMO2(amoand_w,  old & v)
+    AMO2(amoor_w,   old | v)
+    AMO2(amomin_w,  ((int32_t)old < (int32_t)v) ? old : v)
+    AMO2(amomax_w,  ((int32_t)old > (int32_t)v) ? old : v)
+    AMO2(amominu_w, (old < v) ? old : v)
+    AMO2(amomaxu_w, (old > v) ? old : v)
+    #undef AMO2
+
+    /* amoswap has different pattern */
+    op_amoswap_w: {
+        int rd = ip[-1].rd, rs1 = ip[-1].rs1, rs2 = ip[-1].rs2;
+        FOR_EACH_LANE {
+            uint32_t a = GPR(rs1, _li), v = GPR(rs2, _li);
+            uint32_t old = ctrl_read(ctx, a, _li);
+            gpu_write(s, a, 4, v);
+            GPR(rd, _li) = old;
+            PC(_li) += 4;
+        }
+        goto *ip++->handler;
+    }
+
+    /* ============================================================
      * barrier — warp 同步点 (custom-0 指令 0x0000000B)
      *
      * 所有 lane 到达 barrier → 返回 1, 由 scheduler 协调 block 内 warps。
@@ -694,15 +766,23 @@ int engine_exec(ThOp *code, int tcount, const EngineContext *ctx,
          goto *ip++->handler;
     }
 
-    /* 最值 */
+    /* 最值 — RISC-V: NaN 返回非 NaN 操作数 */
     op_fmin_s: {
         int rd = ip[-1].rd, rs1 = ip[-1].rs1, rs2 = ip[-1].rs2;
-        FOR_EACH_LANE { FR(rd, _li) = FR(rs1, _li) < FR(rs2, _li) ? FR(rs1, _li) : FR(rs2, _li); PC(_li) += 4; }
+        FOR_EACH_LANE {
+            float a = FR(rs1, _li), b = FR(rs2, _li);
+            FR(rd, _li) = (a != a) ? b : (b != b) ? a : (a < b ? a : b);
+            PC(_li) += 4;
+        }
           goto *ip++->handler;
     }
     op_fmax_s: {
         int rd = ip[-1].rd, rs1 = ip[-1].rs1, rs2 = ip[-1].rs2;
-        FOR_EACH_LANE { FR(rd, _li) = FR(rs1, _li) > FR(rs2, _li) ? FR(rs1, _li) : FR(rs2, _li); PC(_li) += 4; }
+        FOR_EACH_LANE {
+            float a = FR(rs1, _li), b = FR(rs2, _li);
+            FR(rd, _li) = (a != a) ? b : (b != b) ? a : (a > b ? a : b);
+            PC(_li) += 4;
+        }
           goto *ip++->handler;
     }
 
@@ -744,7 +824,7 @@ int engine_exec(ThOp *code, int tcount, const EngineContext *ctx,
             float f = FR(rs1, _li); uint32_t raw = FPR(rs1, _li);
             GPR(rd, _li) = (uint32_t)(int32_t)(
                 ((raw >> 23) & 0xFF) == 0xFF && (raw & 0x7FFFFF) ? 0x7FFFFFFF :
-                (f > 2.147e9f ? 0x7FFFFFFF : (f < -2.147e9f ? (int32_t)0x80000000 : (int32_t)f)));
+                (f > 2147483648.0f ? 0x7FFFFFFF : (f < -2147483648.0f ? (int32_t)0x80000000 : (int32_t)f)));
             PC(_li) += 4;
         }
           goto *ip++->handler;
@@ -754,7 +834,7 @@ int engine_exec(ThOp *code, int tcount, const EngineContext *ctx,
         FOR_EACH_LANE {
             float f = FR(rs1, _li); uint32_t raw = FPR(rs1, _li);
             GPR(rd, _li) = ((raw >> 23) & 0xFF) == 0xFF && (raw & 0x7FFFFF) ? 0xFFFFFFFF :
-                (f < 0.0f ? 0 : (f > 4.294e9f ? 0xFFFFFFFF : (uint32_t)f));
+                (f < 0.0f ? 0 : (f > 4294967296.0f ? 0xFFFFFFFF : (uint32_t)f));
             PC(_li) += 4;
         }
           goto *ip++->handler;

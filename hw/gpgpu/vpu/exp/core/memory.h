@@ -11,9 +11,8 @@
 #include "state.h"
 
 static inline void out_of_bound(GPGPUState *s, uint32_t addr, int len) {
-    if (addr + len > s->vram_size) {
-        /* OOB: 返回但不中止（容错） */
-    }
+    if (addr + len > s->vram_size)
+        s->error_status |= GPGPU_ERR_VRAM_FAULT;
 }
 
 /* Memory IO function */

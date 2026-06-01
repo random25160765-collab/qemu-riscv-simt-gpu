@@ -105,6 +105,8 @@ static int exec_warp(GPGPUState *s, GPGPUWarp *warp, ThOp *code, int tcount,
     uint32_t gpr[32 * 32], fpr[32 * 32], pc[32], mhartid[32], fcsr[32];
     aos_to_soa(warp, gpr, fpr, pc, mhartid, fcsr);
 
+    s->shm_ptr   = blk->shm;
+    s->shm_size  = blk->shm_size;
     EngineContext ctx = {
         .s = s, .active = warp->active_mask,
         .shm = blk->shm, .shm_size = blk->shm_size,

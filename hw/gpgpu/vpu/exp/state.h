@@ -85,6 +85,10 @@ typedef struct GPGPUState {
     /* VRAM (本地堆分配) */
     uint8_t *vram_ptr;
 
+    /* Shared memory (per-block, 运行时分配) */
+    uint8_t *shm_ptr;
+    uint32_t shm_size;
+
     /* 全局控制寄存器 */
     uint32_t global_ctrl;
     uint32_t global_status;

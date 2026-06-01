@@ -39,6 +39,7 @@ static void load_kernel(const char *path, GPGPUState *s, uint32_t addr) {
 }
 
 static uint64_t g_bp[3];
+static void do_register(void);
 static int run_one(GPGPUState *s, TestCase *t) {
     memset(s->vram_ptr, 0, 5*1024*1024);
     memcpy(g_bp, t->params, sizeof(g_bp));
@@ -64,6 +65,7 @@ static int run_one(GPGPUState *s, TestCase *t) {
 }
 
 int test_run(GPGPUState *s, const char *group, const char *filter) {
+    do_register();
     int errors = 0;
     printf("=== %s ===\n\n", group ? group : "All");
     for (int i = 0; i < n_tests; i++) {
@@ -84,7 +86,7 @@ int test_run(GPGPUState *s, const char *group, const char *filter) {
 static void s_vecmul(GPGPUState *s) { for(uint32_t i=0;i<2048;i++){((float*)(s->vram_ptr+0x100000))[i]=(float)(i+1);((float*)(s->vram_ptr+0x200000))[i]=2.0f;} }
 static int c_vecmul(GPGPUState *s) { for(uint32_t i=0;i<2048;i++) if(fabsf(((float*)(s->vram_ptr+0x300000))[i]-(float)(i+1)*2.0f)>1e-5f)return 1; return 0; }
 static void s_saxpy(GPGPUState *s) { uint32_t N=16384;srand48(42);*(uint32_t*)s->vram_ptr=N;*(float*)(s->vram_ptr+4)=2.5f;for(uint32_t i=0;i<N;i++){((float*)(s->vram_ptr+0x100000))[i]=(float)(drand48()*100-50);((float*)(s->vram_ptr+0x200000))[i]=(float)(drand48()*100-50);} }
-static int c_saxpy(GPGPUState *s) { uint32_t N=16384;float A=2.5f;srand48(42);float*y=malloc(N*4);for(uint32_t i=0;i<N;i++)y[i]=(float)(drand48()*100-50);int e=0;for(uint32_t i=0;i<N&&e<10;i++){float exp=A*((float*)(s->vram_ptr+0x100000))[i]+y[i];if(fabsf(((float*)(s->vram_ptr+0x200000))[i]-exp)>1e-4f*fabsf(exp))e++;}free(y);return e?1:0;}
+static int c_saxpy(GPGPUState *s) { uint32_t N=16384;float A=2.5f;srand48(42);float*y=malloc(N*4);for(uint32_t i=0;i<N;i++){drand48(); /*skip X[i]*/ y[i]=(float)(drand48()*100-50);} int e=0;for(uint32_t i=0;i<N&&e<10;i++){float exp=A*((float*)(s->vram_ptr+0x100000))[i]+y[i];if(fabsf(((float*)(s->vram_ptr+0x200000))[i]-exp)>1e-4f*fabsf(exp))e++;}free(y);return e?1:0;}
 static void s_rv32m(GPGPUState *s) { uint32_t cs[][2]={{10,3},{10,(uint32_t)-3},{(uint32_t)-5,(uint32_t)-2},{100,0},{0x80000000,2},{0xFFFFFFFF,0xFFFFFFFF}};*(uint32_t*)s->vram_ptr=6;memcpy(s->vram_ptr+0x100000,cs,sizeof(cs));}
 static int c_rv32m(GPGPUState *s) { uint32_t cs[][2]={{10,3},{10,(uint32_t)-3},{(uint32_t)-5,(uint32_t)-2},{100,0},{0x80000000,2},{0xFFFFFFFF,0xFFFFFFFF}};for(uint32_t i=0;i<6;i++){int32_t a=cs[i][0],b=cs[i][1];uint32_t*o=(uint32_t*)(s->vram_ptr+0x300000)+i*8;uint32_t ex[]={(uint32_t)(a*b),(uint32_t)(((int64_t)a*(int64_t)b)>>32),(uint32_t)(((int64_t)a*(uint64_t)(uint32_t)b)>>32),(uint32_t)(((uint64_t)(uint32_t)a*(uint64_t)(uint32_t)b)>>32),b?(uint32_t)(a/b):(uint32_t)-1,b?((uint32_t)a/(uint32_t)b):0xFFFFFFFF,b?(uint32_t)(a%b):(uint32_t)a,b?((uint32_t)a%(uint32_t)b):(uint32_t)a};for(int j=0;j<8;j++)if(o[j]!=ex[j])return 1;}return 0;}
 static void s_rv32f(GPGPUState *s) { float fa=3,fb=2,fc=4;int32_t i32=-5;uint32_t u32=7;memcpy(s->vram_ptr+0x100000,&fa,4);memcpy(s->vram_ptr+0x100004,&fb,4);memcpy(s->vram_ptr+0x100008,&fc,4);memcpy(s->vram_ptr+0x10000C,&i32,4);memcpy(s->vram_ptr+0x100010,&u32,4); }
