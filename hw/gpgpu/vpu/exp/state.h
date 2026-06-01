@@ -100,6 +100,7 @@ typedef struct GPGPUState {
 
     /* 内核分发参数 */
     GPGPUKernelParams kernel;
+    uint32_t kern_size;          /* 实际 kernel 大小 (bytes) */
 
     /* DMA 引擎状态 */
     GPGPUDMAState dma;

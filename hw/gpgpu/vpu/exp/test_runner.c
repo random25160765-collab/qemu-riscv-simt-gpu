@@ -35,7 +35,7 @@ static uint8_t *read_file(const char *path, size_t *out_size) {
 }
 static void load_kernel(const char *path, GPGPUState *s, uint32_t addr) {
     size_t sz; uint8_t *buf = read_file(path, &sz);
-    if (buf) { memcpy(s->vram_ptr + addr, buf, sz); free(buf); }
+    if (buf) { memcpy(s->vram_ptr + addr, buf, sz); free(buf); s->kern_size = (uint32_t)sz; }
 }
 
 static uint64_t g_bp[3];

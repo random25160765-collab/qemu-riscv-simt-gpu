@@ -51,11 +51,16 @@ static bool has_rd(uint32_t inst)
     uint32_t op = inst & 0x7F;
     return (op != 0x23 && op != 0x27 && op != 0x63); /* not S/B type */
 }
-static bool has_rs1(uint32_t inst) { return true; }
+static bool has_rs1(uint32_t inst)
+{
+    uint32_t op = inst & 0x7F;
+    return (op != 0x37 && op != 0x17 && op != 0x6F); /* not U/J */
+}
 static bool has_rs2(uint32_t inst)
 {
     uint32_t op = inst & 0x7F;
-    return (op == 0x33 || op == 0x23 || op == 0x27 || op == 0x63); /* R/S/B */
+    return (op == 0x33 || op == 0x23 || op == 0x27 || op == 0x63 ||
+            op == 0x53 || op == 0x43 || op == 0x47 || op == 0x4B || op == 0x4F);
 }
 
 /* ============================================================

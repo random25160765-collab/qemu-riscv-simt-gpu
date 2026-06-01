@@ -191,7 +191,8 @@ int scheduler_run_kernel(GPGPUState *s)
     uint32_t tpb = bd[0] * bd[1] * bd[2];
 
     int tcount = 0;
-    ThOp *code = scheduler_predecode(s, kern_addr, 4096, &tcount);
+    uint32_t ksize = s->kern_size ? s->kern_size : 4096;
+    ThOp *code = scheduler_predecode(s, kern_addr, ksize, &tcount);
     if (!code) return -1;
 
     /* DFG fusion pass (cold path, 一次 kernel launch) */
