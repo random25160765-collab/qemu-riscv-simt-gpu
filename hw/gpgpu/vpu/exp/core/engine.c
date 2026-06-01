@@ -457,22 +457,24 @@ int engine_exec(ThOp *code, int tcount, const EngineContext *ctx,
      * ============================================================ */
     op_fused_matmul_loop: {
         int row_r = ip[-1].rs1, col_r = ip[-1].rs2, acc_r = ip[-1].rd;
-        int K = ip[-1].params[0], N_cols = ip[-1].params[1];
-        uint32_t a_base = (uint32_t)ip[-1].params[2];
-        uint32_t b_base = (uint32_t)ip[-1].params[3];
+        uint32_t a_base = (uint32_t)ip[-1].params[0];
+        uint32_t b_base = (uint32_t)ip[-1].params[1];
         int skip = ip[-1].skip;
-        uint32_t row[32]; memcpy(row, &gpr[row_r * 32], 128);
+        int K = (int)*(uint32_t*)(s->vram_ptr + 0);   /* K 在 VRAM[0] */
+        int N_cols = (int)s->kernel.block_dim[0];     /* N = blockDim.x */
+
         uint32_t col[32]; memcpy(col, &gpr[col_r * 32], 128);
-        FOR_EACH_LANE {
-            float acc = FR(acc_r, _li);
-            for (int k = 0; k < K; k++) {
-                float aik = *(float*)(s->vram_ptr + a_base + (row[_li] * K + k) * 4);
+        uint32_t row0 = gpr[row_r * 32 + 0];
+        float *A_row = (float*)(s->vram_ptr + a_base + row0 * K * 4);
+
+        for (int k = 0; k < K; k++) {
+            float aik = A_row[k];
+            FOR_EACH_LANE {
                 float bkj = *(float*)(s->vram_ptr + b_base + (k * N_cols + col[_li]) * 4);
-                acc += aik * bkj;
+                FR(acc_r, _li) += aik * bkj;
             }
-            FR(acc_r, _li) = acc;
-            PC(_li) += ip[-1].pc_advance;
         }
+        FOR_EACH_LANE PC(_li) += ip[-1].pc_advance;
         ip += skip; goto *ip++->handler;
     }
 
