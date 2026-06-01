@@ -1,13 +1,13 @@
 /*
- * simd_predecode.h — ThOp 预译码
+ * predecode.h — ThOp 预译码
  */
-#ifndef SIMD_PREDECODE_H
-#define SIMD_PREDECODE_H
+#ifndef PREDECODE_H
+#define PREDECODE_H
 
 #include <stdint.h>
 #include <stdlib.h>
 #include "state.h"
-#include "simd_dispatch.h"
+#include "dispatch.h"
 
 /* ============================================================
  * ThOp — 预译码指令
@@ -18,6 +18,11 @@ typedef struct {
     int32_t  imm;
     int8_t   rd, rs1, rs2, rs3;
     int32_t  branch_tgt;
+
+    /* fusion support */
+    int16_t  skip;          /* fused: 跳过的 ThOp 数量 */
+    int16_t  pc_advance;    /* fused: 单 lane 的 PC 增量 */
+    int32_t  params[4];     /* fused: 额外参数 (基址等) */
 } ThOp;
 
 /* trie 查找 */
@@ -80,4 +85,4 @@ static inline ThOp *simd_predecode(SIMDDecoder *d, GPGPUState *s,
             (code)[_i].handler = (_i < (tcount)) ? &&op_illegal : &&op_done; \
 } while(0)
 
-#endif /* SIMD_PREDECODE_H */
+#endif /* PREDECODE_H */

@@ -15,14 +15,17 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 #include <pthread.h>
 #include "state.h"
 #include "gpgpu_core.h"
 #include "engine.h"
 #include "scheduler.h"
-#include "simd_predecode.h"
-#include "simd_dispatch.h"
+#include "predecode.h"
+#include "dispatch.h"
 #include "memory.h"
+#include "soa.h"
+#include "fusion.h"
 
 /* ============================================================
  * 预译码
@@ -63,41 +66,6 @@ static void scheduler_init_warp(GPGPUWarp *warp, uint32_t pc,
         lane->active = (warp->active_mask & (1 << i)) != 0;
         lane->gpr[0].u32 = 0;
         lane->fpr[0].u32 = 0;
-    }
-}
-
-/* ============================================================
- * SoA 编组 / 解组
- * ============================================================ */
-static void aos_to_soa(const GPGPUWarp *warp,
-                        uint32_t gpr[32 * 32], uint32_t fpr[32 * 32],
-                        uint32_t pc[32], uint32_t mhartid[32], uint32_t fcsr[32])
-{
-    for (int lane = 0; lane < 32; lane++) {
-        const GPGPULane *l = &warp->lanes[lane];
-        pc[lane]      = l->pc;
-        mhartid[lane] = l->mhartid;
-        fcsr[lane]    = l->fcsr;
-        for (int r = 0; r < GPGPU_NUM_REGS; r++) {
-            gpr[r * 32 + lane] = l->gpr[r].u32;
-            fpr[r * 32 + lane] = l->fpr[r].u32;
-        }
-    }
-}
-
-static void soa_to_aos(GPGPUWarp *warp,
-                        const uint32_t gpr[32 * 32], const uint32_t fpr[32 * 32],
-                        const uint32_t pc[32], const uint32_t mhartid[32], const uint32_t fcsr[32])
-{
-    for (int lane = 0; lane < 32; lane++) {
-        GPGPULane *l = &warp->lanes[lane];
-        l->pc      = pc[lane];
-        l->mhartid = mhartid[lane];
-        l->fcsr    = fcsr[lane];
-        for (int r = 0; r < GPGPU_NUM_REGS; r++) {
-            l->gpr[r].u32 = gpr[r * 32 + lane];
-            l->fpr[r].u32 = fpr[r * 32 + lane];
-        }
     }
 }
 
@@ -162,8 +130,30 @@ static int exec_warp(GPGPUState *s, GPGPUWarp *warp, ThOp *code, int tcount,
     return ret;
 }
 
+static void *exec_block(void *arg);
+
 /* ============================================================
- * 执行单个 block (pthread 入口, 也可串行调用)
+ * 线程池 work queue
+ * ============================================================ */
+typedef struct {
+    volatile int *idx;
+    BlockContext *blocks;
+    int           total;
+} WorkQueue;
+
+static void *pool_worker(void *arg)
+{
+    WorkQueue *wq = (WorkQueue *)arg;
+    while (1) {
+        int i = __sync_fetch_and_add(wq->idx, 1);
+        if (i >= wq->total) break;
+        exec_block(&wq->blocks[i]);
+    }
+    return NULL;
+}
+
+/* ============================================================
+ * 执行单个 block
  * ============================================================ */
 static void *exec_block(void *arg)
 {
@@ -201,6 +191,11 @@ int scheduler_run_kernel(GPGPUState *s)
     ThOp *code = scheduler_predecode(s, kern_addr, 4096, &tcount);
     if (!code) return -1;
 
+    /* DFG fusion pass */
+    int fused_count = 0;
+    ThOp *fused = fusion_pass(code, tcount, &fused_count);
+    if (fused) { free(code); code = fused; tcount = fused_count; }
+
     /* 收集所有 block */
     uint32_t total_blocks = gd[0] * gd[1] * gd[2];
     BlockContext *blocks = calloc(total_blocks, sizeof(BlockContext));
@@ -227,15 +222,23 @@ int scheduler_run_kernel(GPGPUState *s)
         }
     }
 
-    /* 并行执行所有 block */
+    /* 线程池并行: N workers 原子争抢 block */
     if (num_blocks > 1) {
-        pthread_t *threads = calloc(num_blocks, sizeof(pthread_t));
-        for (int i = 0; i < num_blocks; i++)
-            pthread_create(&threads[i], NULL, exec_block, &blocks[i]);
-        for (int i = 0; i < num_blocks; i++)
+        int n_workers = (int)sysconf(_SC_NPROCESSORS_ONLN);
+        if (n_workers < 1) n_workers = 4;
+        if (n_workers > num_blocks) n_workers = num_blocks;
+
+        /* 用 exec_block 配合原子索引实现 work-stealing */
+        int work_idx = 0;
+        WorkQueue wq = { .idx = &work_idx, .blocks = blocks, .total = num_blocks };
+
+        pthread_t *threads = calloc(n_workers, sizeof(pthread_t));
+        for (int i = 0; i < n_workers; i++)
+            pthread_create(&threads[i], NULL, pool_worker, &wq);
+        for (int i = 0; i < n_workers; i++)
             pthread_join(threads[i], NULL);
         free(threads);
-    } else if (num_blocks == 1) {
+    } else {
         exec_block(&blocks[0]);
     }
 

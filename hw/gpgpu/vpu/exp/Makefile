@@ -32,6 +32,7 @@ SRCS  = main.c
 SRCS += test_runner.c
 SRCS += core/engine.c
 SRCS += core/scheduler.c
+SRCS += core/fusion.c
 SRCS += core/decode_trie.c
 SRCS += core/lpfp.c
 SRCS += core/memory.c
@@ -54,6 +55,9 @@ perf_test: $(KERN_BINS) perf_test.elf
 	@echo ""
 	@echo "=== Running Performance Tests ==="
 	@echo ""
+	./perf_test.elf
+
+test: $(KERN_BINS) perf_test.elf
 	./perf_test.elf
 
 perf_test.elf: $(OBJS)

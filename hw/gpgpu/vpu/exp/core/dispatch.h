@@ -1,5 +1,5 @@
 /*
- * simd_dispatch.h — 指令表 + trie 构建 + dispatch 表填充宏
+ * dispatch.h — 指令表 + trie 构建 + dispatch 表填充宏
  * 被 gpgpu_core_simd.c include，不依赖其他解释器
  */
 #ifndef SIMD_DISPATCH_H
@@ -109,7 +109,9 @@ typedef enum { TYPE_R, TYPE_I, TYPE_U, TYPE_S, TYPE_J, TYPE_B, TYPE_CSR, TYPE_FR
     X(fsigmoid_s,"0110000 00101 ????? ??? ????? 10100 11", TYPE_FR, imm0); \
     X(fsin_s,   "0110000 00110 ????? ??? ????? 10100 11", TYPE_FR, imm0); \
     X(fcos_s,   "0110000 00111 ????? ??? ????? 10100 11", TYPE_FR, imm0); \
-    X(barrier,  "0000000 00000 00000 000 00000 00010 11", TYPE_I, imm0)
+    X(barrier,  "0000000 00000 00000 000 00000 00010 11", TYPE_I, imm0); \
+    X(fused_vecmul,"0000000 00000 00000 000 00001 00010 11", TYPE_I, imm0); \
+    X(fused_ld2_fma,"0000000 00000 00000 000 00010 00010 11", TYPE_I, imm0)
 
 static inline int32_t imm0(uint32_t i) { (void)i; return 0; }
 

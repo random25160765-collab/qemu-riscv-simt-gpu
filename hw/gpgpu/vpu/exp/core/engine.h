@@ -13,7 +13,7 @@
 
 #include <stdint.h>
 #include "state.h"
-#include "simd_predecode.h"   /* ThOp */
+#include "predecode.h"   /* ThOp */
 
 /*
  * ============================================================================

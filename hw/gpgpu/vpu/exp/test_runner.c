@@ -81,8 +81,6 @@ static int run_kernel(GPGPUState *s, const char *kern_path,
 
     load_kernel(kern_path, s, kernel_addr);
 
-    s->inst_count = 0;
-    s->fp_count   = 0;
     clock_gettime(CLOCK_MONOTONIC, &t0);
     int ret = scheduler_run_kernel(s);
     clock_gettime(CLOCK_MONOTONIC, &t1);
@@ -349,6 +347,7 @@ static TestResult test_perf_vecmul(GPGPUState *s)
         ((float *)(s->vram_ptr + 0x200000))[i] = 3.0f;
     }
     /* grid=(N/32,1,1) blocks, block=(32,1,1) threads */
+    s->fp_count = N;  /* 1 fmul per element */
     if (run_kernel(s, "kernels/vecmul.bin", kern, N/32, 1, 1, 32, 1, 1) != 0) {
         r.errors = -1; return r;
     }
@@ -372,6 +371,7 @@ static TestResult test_perf_matmul(GPGPUState *s)
     for (uint32_t i = 0; i < K * N; i++)
         ((float *)(s->vram_ptr + 0x200000))[i] = 1.0f;
     /* grid=(M,1,1), block=(N,1,1) → M*N threads, M blocks */
+    s->fp_count = (uint64_t)M * N * K * 2;  /* M*N threads × K iters × 2 flops/fmadd */
     if (run_kernel(s, "kernels/matmul.bin", kern, M, 1, 1, N, 1, 1) != 0) {
         r.errors = -1; return r;
     }
