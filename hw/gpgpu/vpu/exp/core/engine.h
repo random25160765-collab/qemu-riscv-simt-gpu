@@ -21,10 +21,16 @@
  * ============================================================================
  */
 typedef struct {
-    GPGPUState *s;            /* VRAM 访问 + kernel 参数 */
+    GPGPUState *s;            /* VRAM 访问 + kernel 参数 (只读) */
     uint32_t    active;       /* 活跃掩码：0x1=标量, 0xFFFFFFFF=全 warp */
-    uint32_t    thread_id_base; /* warp 的起始 thread_id (lane i = base + i) */
+    uint8_t    *shm;          /* shared memory buffer (NULL if none) */
+    uint32_t    shm_size;     /* shared memory size */
+
+    /* per-warp SIMT 上下文 (线程安全: 每个 warp 一份, 不共享) */
+    uint32_t    thread_id[3]; /* 当前线程 ID (base + lane offset) */
     uint32_t    block_id[3];  /* 所属 block ID */
+    uint32_t    warp_id;      /* warp 编号 */
+    uint32_t    thread_mask;  /* 活跃线程掩码 */
 } EngineContext;
 
 /*

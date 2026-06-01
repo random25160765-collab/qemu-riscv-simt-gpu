@@ -36,22 +36,31 @@
  * ============================================================ */
 static inline uint32_t ctrl_read(const EngineContext *ctx, uint32_t addr, int lane)
 {
+    GPGPUState *s = ctx->s;
     if (addr < 0x80000000)
-        return gpu_read(ctx->s, addr, 4);
+        return gpu_read(s, addr, 4);
+
+    /* shared memory: 0x80001000+ */
+    if (addr >= 0x80001000 && ctx->shm) {
+        uint32_t off = addr - 0x80001000;
+        if (off + 4 <= ctx->shm_size)
+            return *(uint32_t *)(ctx->shm + off);
+        return 0;
+    }
 
     switch (addr - 0x80000000) {
-        case 0x00: return ctx->thread_id_base + lane;  /* thread_id.x */
-        case 0x04: return 0;                            /* thread_id.y */
-        case 0x08: return 0;                            /* thread_id.z */
+        case 0x00: return ctx->thread_id[0] + lane;  /* thread_id.x */
+        case 0x04: return ctx->thread_id[1];          /* thread_id.y */
+        case 0x08: return ctx->thread_id[2];          /* thread_id.z */
         case 0x10: return ctx->block_id[0];
         case 0x14: return ctx->block_id[1];
         case 0x18: return ctx->block_id[2];
-        case 0x20: return ctx->s->kernel.block_dim[0];
-        case 0x24: return ctx->s->kernel.block_dim[1];
-        case 0x28: return ctx->s->kernel.block_dim[2];
-        case 0x30: return ctx->s->kernel.grid_dim[0];
-        case 0x34: return ctx->s->kernel.grid_dim[1];
-        case 0x38: return ctx->s->kernel.grid_dim[2];
+        case 0x20: return s->kernel.block_dim[0];
+        case 0x24: return s->kernel.block_dim[1];
+        case 0x28: return s->kernel.block_dim[2];
+        case 0x30: return s->kernel.grid_dim[0];
+        case 0x34: return s->kernel.grid_dim[1];
+        case 0x38: return s->kernel.grid_dim[2];
         default:   return 0;
     }
 }
@@ -62,7 +71,7 @@ static inline uint32_t ctrl_read(const EngineContext *ctx, uint32_t addr, int la
  * ============================================================ */
 #define NUM_OF_INST 300
 static void *dispatch[NUM_OF_INST];
-static int dispatch_ready = 0;
+static volatile int dispatch_ready = 0;
 
 void engine_resolve_handlers(ThOp *code, int tcount)
 {
@@ -422,11 +431,17 @@ int engine_exec(ThOp *code, int tcount, const EngineContext *ctx,
      * ebreak / done
      * ============================================================ */
     /* ============================================================
-     * ebreak / done — SIMT stack 感知出口
+     * barrier — warp 同步点 (custom-0 指令 0x0000000B)
      *
-     * 所有活跃 lane 退出 → _active=0。
-     * 栈非空 → pop 恢复之前 push 的 not_taken 路径，继续执行。
-     * 栈空   → 整个 warp 完成, return 0。
+     * 所有 lane 到达 barrier → 返回 1, 由 scheduler 协调 block 内 warps。
+     * ============================================================ */
+    op_barrier: {
+        s->simt.barrier_active = true;
+        return 1;
+    }
+
+    /* ============================================================
+     * ebreak / done — SIMT stack 感知出口
      * ============================================================ */
     op_ebreak: {
         _active = 0;
