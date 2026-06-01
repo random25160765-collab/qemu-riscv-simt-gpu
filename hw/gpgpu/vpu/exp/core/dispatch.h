@@ -145,7 +145,7 @@ typedef struct {
 } SIMDDecoder;
 
 /* 初始化 trie（构造函数调用一次） */
-static void simd_decoder_init(SIMDDecoder *d) {
+static inline __attribute__((unused)) void simd_decoder_init(SIMDDecoder *d) {
     if (d->op_count > 0) return;
     int idx = 0;
     #define X(name, pattern, op_type, imm_fn) \

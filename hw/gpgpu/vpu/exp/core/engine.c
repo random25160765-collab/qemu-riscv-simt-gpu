@@ -9,6 +9,7 @@
  */
 
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
@@ -152,8 +153,21 @@ int engine_exec(ThOp *code, int tcount, const EngineContext *ctx,
         }
     }
 
+    /* x0 硬连线: 每条指令分发前清零, -O3 优化为向量 store */
+    #define NEXT() do { \
+        gpr[0*32+0]=gpr[0*32+1]=gpr[0*32+2]=gpr[0*32+3]=0; \
+        gpr[0*32+4]=gpr[0*32+5]=gpr[0*32+6]=gpr[0*32+7]=0; \
+        gpr[0*32+8]=gpr[0*32+9]=gpr[0*32+10]=gpr[0*32+11]=0; \
+        gpr[0*32+12]=gpr[0*32+13]=gpr[0*32+14]=gpr[0*32+15]=0; \
+        gpr[0*32+16]=gpr[0*32+17]=gpr[0*32+18]=gpr[0*32+19]=0; \
+        gpr[0*32+20]=gpr[0*32+21]=gpr[0*32+22]=gpr[0*32+23]=0; \
+        gpr[0*32+24]=gpr[0*32+25]=gpr[0*32+26]=gpr[0*32+27]=0; \
+        gpr[0*32+28]=gpr[0*32+29]=gpr[0*32+30]=gpr[0*32+31]=0; \
+        goto *ip++->handler; \
+    } while(0)
+
     ip = code;
-     goto *ip++->handler;
+    NEXT();
 
     /* ============================================================
      * 无条件跳转 (所有 lane 统一, 不发散)
@@ -162,14 +176,14 @@ int engine_exec(ThOp *code, int tcount, const EngineContext *ctx,
         int rd = ip[-1].rd, imm = ip[-1].imm;
         FOR_EACH_LANE { GPR(rd, _li) = PC(_li) + 4; PC(_li) += imm; }
         ip = &code[ip[-1].branch_tgt];
-         goto *ip++->handler;
+         NEXT();
     }
     op_jalr: {
         int rd = ip[-1].rd, rs1 = ip[-1].rs1, imm = ip[-1].imm;
         int32_t target = (int32_t)(GPR(rs1, 0) + imm) & ~1;
         FOR_EACH_LANE { GPR(rd, _li) = PC(_li) + 4; PC(_li) = (uint32_t)target; }
         ip = &code[(target - s->kernel.kernel_addr) / 4];
-         goto *ip++->handler;
+         NEXT();
     }
 
     /* ============================================================
@@ -210,7 +224,7 @@ int engine_exec(ThOp *code, int tcount, const EngineContext *ctx,
         } else { \
             _active = _not_taken; \
         } \
-         goto *ip++->handler; \
+         NEXT(); \
     } while(0)
 
     op_beq:  DIV_BR(_a == _b);
@@ -232,7 +246,7 @@ int engine_exec(ThOp *code, int tcount, const EngineContext *ctx,
             GPR(rd, _li) = (uint32_t)((int32_t)(v << 24) >> 24);
             PC(_li) += 4;
         }
-         goto *ip++->handler;
+         NEXT();
     }
     op_lh: {
         int rd = ip[-1].rd, rs1 = ip[-1].rs1, imm = ip[-1].imm;
@@ -242,7 +256,7 @@ int engine_exec(ThOp *code, int tcount, const EngineContext *ctx,
             GPR(rd, _li) = (uint32_t)((int32_t)(v << 16) >> 16);
             PC(_li) += 4;
         }
-         goto *ip++->handler;
+         NEXT();
     }
     op_lw: {
         int rd = ip[-1].rd, rs1 = ip[-1].rs1, imm = ip[-1].imm;
@@ -251,7 +265,7 @@ int engine_exec(ThOp *code, int tcount, const EngineContext *ctx,
             GPR(rd, _li) = ctrl_read(ctx, a, _li);
             PC(_li) += 4;
         }
-         goto *ip++->handler;
+         NEXT();
     }
     op_lbu: {
         int rd = ip[-1].rd, rs1 = ip[-1].rs1, imm = ip[-1].imm;
@@ -260,7 +274,7 @@ int engine_exec(ThOp *code, int tcount, const EngineContext *ctx,
             GPR(rd, _li) = (uint32_t)gpu_read(s, a, 1);
             PC(_li) += 4;
         }
-         goto *ip++->handler;
+         NEXT();
     }
     op_lhu: {
         int rd = ip[-1].rd, rs1 = ip[-1].rs1, imm = ip[-1].imm;
@@ -269,24 +283,24 @@ int engine_exec(ThOp *code, int tcount, const EngineContext *ctx,
             GPR(rd, _li) = (uint32_t)gpu_read(s, a, 2);
             PC(_li) += 4;
         }
-         goto *ip++->handler;
+         NEXT();
     }
 
     /* Store */
     op_sb: {
         int rs1 = ip[-1].rs1, rs2 = ip[-1].rs2, imm = ip[-1].imm;
         FOR_EACH_LANE { gpu_write(s, GPR(rs1, _li) + imm, 1, GPR(rs2, _li)); PC(_li) += 4; }
-         goto *ip++->handler;
+         NEXT();
     }
     op_sh: {
         int rs1 = ip[-1].rs1, rs2 = ip[-1].rs2, imm = ip[-1].imm;
         FOR_EACH_LANE { gpu_write(s, GPR(rs1, _li) + imm, 2, GPR(rs2, _li)); PC(_li) += 4; }
-         goto *ip++->handler;
+         NEXT();
     }
     op_sw: {
         int rs1 = ip[-1].rs1, rs2 = ip[-1].rs2, imm = ip[-1].imm;
         FOR_EACH_LANE { gpu_write(s, GPR(rs1, _li) + imm, 4, GPR(rs2, _li)); PC(_li) += 4; }
-         goto *ip++->handler;
+         NEXT();
     }
 
     /* ============================================================
@@ -295,12 +309,12 @@ int engine_exec(ThOp *code, int tcount, const EngineContext *ctx,
     op_lui: {
         int rd = ip[-1].rd; uint32_t v = (uint32_t)ip[-1].imm;
         FOR_EACH_LANE { GPR(rd, _li) = v; PC(_li) += 4; }
-         goto *ip++->handler;
+         NEXT();
     }
     op_auipc: {
         int rd = ip[-1].rd; uint32_t v = (uint32_t)ip[-1].imm;
         FOR_EACH_LANE { GPR(rd, _li) = PC(_li) + v; PC(_li) += 4; }
-         goto *ip++->handler;
+         NEXT();
     }
 
     /* ============================================================
@@ -310,7 +324,7 @@ int engine_exec(ThOp *code, int tcount, const EngineContext *ctx,
     op_##name: { \
         int rd = ip[-1].rd, rs1 = ip[-1].rs1, imm = ip[-1].imm; \
         FOR_EACH_LANE { GPR(rd, _li) = GPR(rs1, _li) op (uint32_t)imm; PC(_li) += 4; } \
-         goto *ip++->handler; \
+         NEXT(); \
     }
     ALUI(addi, +) ALUI(xori, ^) ALUI(ori, |) ALUI(andi, &)
     #undef ALUI
@@ -318,27 +332,27 @@ int engine_exec(ThOp *code, int tcount, const EngineContext *ctx,
     op_slti: {
         int rd = ip[-1].rd, rs1 = ip[-1].rs1, imm = ip[-1].imm;
         FOR_EACH_LANE { GPR(rd, _li) = ((int32_t)GPR(rs1, _li) < imm) ? 1 : 0; PC(_li) += 4; }
-         goto *ip++->handler;
+         NEXT();
     }
     op_sltiu: {
         int rd = ip[-1].rd, rs1 = ip[-1].rs1, imm = ip[-1].imm;
         FOR_EACH_LANE { GPR(rd, _li) = (GPR(rs1, _li) < (uint32_t)imm) ? 1 : 0; PC(_li) += 4; }
-         goto *ip++->handler;
+         NEXT();
     }
     op_slli: {
         int rd = ip[-1].rd, rs1 = ip[-1].rs1, imm = ip[-1].imm;
         FOR_EACH_LANE { GPR(rd, _li) = GPR(rs1, _li) << (imm & 0x1F); PC(_li) += 4; }
-         goto *ip++->handler;
+         NEXT();
     }
     op_srli: {
         int rd = ip[-1].rd, rs1 = ip[-1].rs1, imm = ip[-1].imm;
         FOR_EACH_LANE { GPR(rd, _li) = GPR(rs1, _li) >> (imm & 0x1F); PC(_li) += 4; }
-         goto *ip++->handler;
+         NEXT();
     }
     op_srai: {
         int rd = ip[-1].rd, rs1 = ip[-1].rs1, imm = ip[-1].imm;
         FOR_EACH_LANE { GPR(rd, _li) = (uint32_t)((int32_t)GPR(rs1, _li) >> (imm & 0x1F)); PC(_li) += 4; }
-         goto *ip++->handler;
+         NEXT();
     }
 
     /* ============================================================
@@ -348,7 +362,7 @@ int engine_exec(ThOp *code, int tcount, const EngineContext *ctx,
     op_##name: { \
         int rd = ip[-1].rd, rs1 = ip[-1].rs1, rs2 = ip[-1].rs2; \
         FOR_EACH_LANE { GPR(rd, _li) = GPR(rs1, _li) op GPR(rs2, _li); PC(_li) += 4; } \
-         goto *ip++->handler; \
+         NEXT(); \
     }
     ALUR(add, +) ALUR(sub, -) ALUR(xor, ^) ALUR(or, |) ALUR(and, &) ALUR(mul, *)
     #undef ALUR
@@ -356,27 +370,27 @@ int engine_exec(ThOp *code, int tcount, const EngineContext *ctx,
     op_sll: {
         int rd = ip[-1].rd, rs1 = ip[-1].rs1, rs2 = ip[-1].rs2;
         FOR_EACH_LANE { GPR(rd, _li) = GPR(rs1, _li) << (GPR(rs2, _li) & 0x1F); PC(_li) += 4; }
-         goto *ip++->handler;
+         NEXT();
     }
     op_srl: {
         int rd = ip[-1].rd, rs1 = ip[-1].rs1, rs2 = ip[-1].rs2;
         FOR_EACH_LANE { GPR(rd, _li) = GPR(rs1, _li) >> (GPR(rs2, _li) & 0x1F); PC(_li) += 4; }
-         goto *ip++->handler;
+         NEXT();
     }
     op_sra: {
         int rd = ip[-1].rd, rs1 = ip[-1].rs1, rs2 = ip[-1].rs2;
         FOR_EACH_LANE { GPR(rd, _li) = (uint32_t)((int32_t)GPR(rs1, _li) >> (GPR(rs2, _li) & 0x1F)); PC(_li) += 4; }
-         goto *ip++->handler;
+         NEXT();
     }
     op_slt: {
         int rd = ip[-1].rd, rs1 = ip[-1].rs1, rs2 = ip[-1].rs2;
         FOR_EACH_LANE { GPR(rd, _li) = ((int32_t)GPR(rs1, _li) < (int32_t)GPR(rs2, _li)) ? 1 : 0; PC(_li) += 4; }
-         goto *ip++->handler;
+         NEXT();
     }
     op_sltu: {
         int rd = ip[-1].rd, rs1 = ip[-1].rs1, rs2 = ip[-1].rs2;
         FOR_EACH_LANE { GPR(rd, _li) = (GPR(rs1, _li) < GPR(rs2, _li)) ? 1 : 0; PC(_li) += 4; }
-         goto *ip++->handler;
+         NEXT();
     }
 
     /* ============================================================
@@ -385,17 +399,17 @@ int engine_exec(ThOp *code, int tcount, const EngineContext *ctx,
     op_mulh: {
         int rd = ip[-1].rd, rs1 = ip[-1].rs1, rs2 = ip[-1].rs2;
         FOR_EACH_LANE { GPR(rd, _li) = (uint32_t)(((int64_t)(int32_t)GPR(rs1, _li) * (int64_t)(int32_t)GPR(rs2, _li)) >> 32); PC(_li) += 4; }
-         goto *ip++->handler;
+         NEXT();
     }
     op_mulhsu: {
         int rd = ip[-1].rd, rs1 = ip[-1].rs1, rs2 = ip[-1].rs2;
         FOR_EACH_LANE { GPR(rd, _li) = (uint32_t)(((int64_t)(int32_t)GPR(rs1, _li) * (uint64_t)GPR(rs2, _li)) >> 32); PC(_li) += 4; }
-         goto *ip++->handler;
+         NEXT();
     }
     op_mulhu: {
         int rd = ip[-1].rd, rs1 = ip[-1].rs1, rs2 = ip[-1].rs2;
         FOR_EACH_LANE { GPR(rd, _li) = (uint32_t)(((uint64_t)GPR(rs1, _li) * (uint64_t)GPR(rs2, _li)) >> 32); PC(_li) += 4; }
-         goto *ip++->handler;
+         NEXT();
     }
     op_div: {
         int rd = ip[-1].rd, rs1 = ip[-1].rs1, rs2 = ip[-1].rs2;
@@ -403,7 +417,7 @@ int engine_exec(ThOp *code, int tcount, const EngineContext *ctx,
             int32_t a = (int32_t)GPR(rs1, _li), b = (int32_t)GPR(rs2, _li);
             GPR(rd, _li) = b ? (uint32_t)((a == INT32_MIN && b == -1) ? INT32_MIN : a / b) : (uint32_t)-1; PC(_li) += 4;
         }
-         goto *ip++->handler;
+         NEXT();
     }
     op_divu: {
         int rd = ip[-1].rd, rs1 = ip[-1].rs1, rs2 = ip[-1].rs2;
@@ -411,7 +425,7 @@ int engine_exec(ThOp *code, int tcount, const EngineContext *ctx,
             uint32_t a = GPR(rs1, _li), b = GPR(rs2, _li);
             GPR(rd, _li) = b ? a / b : 0xFFFFFFFF; PC(_li) += 4;
         }
-         goto *ip++->handler;
+         NEXT();
     }
     op_rem: {
         int rd = ip[-1].rd, rs1 = ip[-1].rs1, rs2 = ip[-1].rs2;
@@ -419,7 +433,7 @@ int engine_exec(ThOp *code, int tcount, const EngineContext *ctx,
             int32_t a = (int32_t)GPR(rs1, _li), b = (int32_t)GPR(rs2, _li);
             GPR(rd, _li) = b ? (uint32_t)((a == INT32_MIN && b == -1) ? 0 : a % b) : GPR(rs1, _li); PC(_li) += 4;
         }
-         goto *ip++->handler;
+         NEXT();
     }
     op_remu: {
         int rd = ip[-1].rd, rs1 = ip[-1].rs1, rs2 = ip[-1].rs2;
@@ -427,7 +441,7 @@ int engine_exec(ThOp *code, int tcount, const EngineContext *ctx,
             uint32_t a = GPR(rs1, _li), b = GPR(rs2, _li);
             GPR(rd, _li) = b ? a % b : a; PC(_li) += 4;
         }
-         goto *ip++->handler;
+         NEXT();
     }
 
     /* ============================================================
@@ -465,7 +479,7 @@ int engine_exec(ThOp *code, int tcount, const EngineContext *ctx,
             *(float*)(s->vram_ptr + c_base + off) = a * b;
             PC(_li) += ip[-1].pc_advance;
         }
-        ip += skip; goto *ip++->handler;
+        ip += skip; NEXT();
     }
 
     /* ============================================================
@@ -493,7 +507,7 @@ int engine_exec(ThOp *code, int tcount, const EngineContext *ctx,
             }
         }
         FOR_EACH_LANE PC(_li) += ip[-1].pc_advance;
-        ip += skip; goto *ip++->handler;
+        ip += skip; NEXT();
     }
 
     /* ============================================================
@@ -517,7 +531,7 @@ int engine_exec(ThOp *code, int tcount, const EngineContext *ctx,
                 *(float*)(s->vram_ptr + b_base + col[_li] * 4);
             PC(_li) += ip[-1].pc_advance;
         }
-        ip += skip; goto *ip++->handler;
+        ip += skip; NEXT();
     }
 
     /* ============================================================
@@ -536,7 +550,7 @@ int engine_exec(ThOp *code, int tcount, const EngineContext *ctx,
             *(float*)(s->vram_ptr + c_base + off) = a * alpha;
             PC(_li) += ip[-1].pc_advance;
         }
-        ip += skip; goto *ip++->handler;
+        ip += skip; NEXT();
     }
 
     /* ============================================================
@@ -553,7 +567,7 @@ int engine_exec(ThOp *code, int tcount, const EngineContext *ctx,
             *(float*)(s->vram_ptr + o_base + off) = x * fastsigmoid(1.702f * x);
             PC(_li) += ip[-1].pc_advance;
         }
-        ip += skip; goto *ip++->handler;
+        ip += skip; NEXT();
     }
 
     /* ============================================================
@@ -571,7 +585,7 @@ int engine_exec(ThOp *code, int tcount, const EngineContext *ctx,
             FR(sum_r, _li) += val;
             PC(_li) += ip[-1].pc_advance;
         }
-        ip += skip; goto *ip++->handler;
+        ip += skip; NEXT();
     }
 
     /* ============================================================
@@ -584,7 +598,7 @@ int engine_exec(ThOp *code, int tcount, const EngineContext *ctx,
             GPR(rd, _li) = ctrl_read(ctx, a, _li);  /* load exclusive = normal load */
             PC(_li) += 4;
         }
-        goto *ip++->handler;
+        NEXT();
     }
     op_sc_w: {
         int rd = ip[-1].rd, rs1 = ip[-1].rs1, rs2 = ip[-1].rs2;
@@ -594,7 +608,7 @@ int engine_exec(ThOp *code, int tcount, const EngineContext *ctx,
             GPR(rd, _li) = 0;  /* always success */
             PC(_li) += 4;
         }
-        goto *ip++->handler;
+        NEXT();
     }
 
     #define AMO(name, op) \
@@ -607,7 +621,7 @@ int engine_exec(ThOp *code, int tcount, const EngineContext *ctx,
             GPR(rd, _li) = old; \
             PC(_li) += 4; \
         } \
-        goto *ip++->handler; \
+        NEXT(); \
     }
     AMO(amoadd_w, +)
     #undef AMO
@@ -622,7 +636,7 @@ int engine_exec(ThOp *code, int tcount, const EngineContext *ctx,
             GPR(rd, _li) = old; \
             PC(_li) += 4; \
         } \
-        goto *ip++->handler; \
+        NEXT(); \
     }
     AMO2(amoxor_w,  old ^ v)
     AMO2(amoand_w,  old & v)
@@ -643,7 +657,7 @@ int engine_exec(ThOp *code, int tcount, const EngineContext *ctx,
             GPR(rd, _li) = old;
             PC(_li) += 4;
         }
-        goto *ip++->handler;
+        NEXT();
     }
 
     /* ============================================================
@@ -665,7 +679,7 @@ int engine_exec(ThOp *code, int tcount, const EngineContext *ctx,
             _sdepth--;
             _active = _stk[_sdepth].mask;
             ip = &code[_stk[_sdepth].ft_idx];
-             goto *ip++->handler;
+             NEXT();
         }
         return 0;
     }
@@ -675,7 +689,7 @@ int engine_exec(ThOp *code, int tcount, const EngineContext *ctx,
             _sdepth--;
             _active = _stk[_sdepth].mask;
             ip = &code[_stk[_sdepth].ft_idx];
-             goto *ip++->handler;
+             NEXT();
         }
         return 0;
     }
@@ -690,16 +704,16 @@ int engine_exec(ThOp *code, int tcount, const EngineContext *ctx,
             FPR(rd, _li) = *(uint32_t *)(s->vram_ptr + a);
             PC(_li) += 4;
         }
-         goto *ip++->handler;
+         NEXT();
     }
     op_fsw: {
         int rs1 = ip[-1].rs1, rs2 = ip[-1].rs2, imm = ip[-1].imm;
         FOR_EACH_LANE {
             uint32_t a = GPR(rs1, _li) + imm;
             *(uint32_t *)(s->vram_ptr + a) = FPR(rs2, _li);
-            PC(_li) += 4;
         }
-         goto *ip++->handler;
+        FOR_EACH_LANE PC(_li) += 4;
+        NEXT();
     }
 
     /* ============================================================
@@ -711,7 +725,7 @@ int engine_exec(ThOp *code, int tcount, const EngineContext *ctx,
         FOR_EACH_LANE { FR(rd, _li) = FR(rs1, _li) op FR(rs2, _li); } \
         FOR_EACH_LANE PC(_li) += 4; \
          \
-         goto *ip++->handler; \
+         NEXT(); \
     }
     FPBIN(fadd_s, +) FPBIN(fsub_s, -) FPBIN(fmul_s, *) FPBIN(fdiv_s, /)
     #undef FPBIN
@@ -721,49 +735,49 @@ int engine_exec(ThOp *code, int tcount, const EngineContext *ctx,
         int rd = ip[-1].rd, rs1 = ip[-1].rs1, rs2 = ip[-1].rs2, rs3 = ip[-1].rs3;
         FOR_EACH_LANE { FR(rd, _li) = FR(rs1, _li) * FR(rs2, _li) + FR(rs3, _li); }
         FOR_EACH_LANE PC(_li) += 4;
-        goto *ip++->handler;
+        NEXT();
     }
     op_fmsub_s: {
         int rd = ip[-1].rd, rs1 = ip[-1].rs1, rs2 = ip[-1].rs2, rs3 = ip[-1].rs3;
         FOR_EACH_LANE { FR(rd, _li) = FR(rs1, _li) * FR(rs2, _li) - FR(rs3, _li); }
         FOR_EACH_LANE PC(_li) += 4;
-        goto *ip++->handler;
+        NEXT();
     }
     op_fnmsub_s: {
         int rd = ip[-1].rd, rs1 = ip[-1].rs1, rs2 = ip[-1].rs2, rs3 = ip[-1].rs3;
         FOR_EACH_LANE { FR(rd, _li) = -(FR(rs1, _li) * FR(rs2, _li) - FR(rs3, _li)); }
         FOR_EACH_LANE PC(_li) += 4;
-        goto *ip++->handler;
+        NEXT();
     }
     op_fnmadd_s: {
         int rd = ip[-1].rd, rs1 = ip[-1].rs1, rs2 = ip[-1].rs2, rs3 = ip[-1].rs3;
         FOR_EACH_LANE { FR(rd, _li) = -(FR(rs1, _li) * FR(rs2, _li) + FR(rs3, _li)); }
         FOR_EACH_LANE PC(_li) += 4;
-        goto *ip++->handler;
+        NEXT();
     }
 
     /* fsqrt — per-lane libm */
     op_fsqrt_s: {
         int rd = ip[-1].rd, rs1 = ip[-1].rs1;
         FOR_EACH_LANE { FR(rd, _li) = sqrtf(FR(rs1, _li)); PC(_li) += 4; }
-          goto *ip++->handler;
+          NEXT();
     }
 
     /* 符号注入 — 位操作 */
     op_fsgnj_s: {
         int rd = ip[-1].rd, rs1 = ip[-1].rs1, rs2 = ip[-1].rs2;
         FOR_EACH_LANE { FPR(rd, _li) = (FPR(rs1, _li) & ~0x80000000) | (FPR(rs2, _li) & 0x80000000); PC(_li) += 4; }
-         goto *ip++->handler;
+         NEXT();
     }
     op_fsgnjn_s: {
         int rd = ip[-1].rd, rs1 = ip[-1].rs1, rs2 = ip[-1].rs2;
         FOR_EACH_LANE { FPR(rd, _li) = (FPR(rs1, _li) & ~0x80000000) | ((~FPR(rs2, _li)) & 0x80000000); PC(_li) += 4; }
-         goto *ip++->handler;
+         NEXT();
     }
     op_fsgnjx_s: {
         int rd = ip[-1].rd, rs1 = ip[-1].rs1, rs2 = ip[-1].rs2;
         FOR_EACH_LANE { FPR(rd, _li) = FPR(rs1, _li) ^ (FPR(rs2, _li) & 0x80000000); PC(_li) += 4; }
-         goto *ip++->handler;
+         NEXT();
     }
 
     /* 最值 — RISC-V: NaN 返回非 NaN 操作数 */
@@ -774,7 +788,7 @@ int engine_exec(ThOp *code, int tcount, const EngineContext *ctx,
             FR(rd, _li) = (a != a) ? b : (b != b) ? a : (a < b ? a : b);
             PC(_li) += 4;
         }
-          goto *ip++->handler;
+          NEXT();
     }
     op_fmax_s: {
         int rd = ip[-1].rd, rs1 = ip[-1].rs1, rs2 = ip[-1].rs2;
@@ -783,7 +797,7 @@ int engine_exec(ThOp *code, int tcount, const EngineContext *ctx,
             FR(rd, _li) = (a != a) ? b : (b != b) ? a : (a > b ? a : b);
             PC(_li) += 4;
         }
-          goto *ip++->handler;
+          NEXT();
     }
 
     /* ============================================================
@@ -792,17 +806,17 @@ int engine_exec(ThOp *code, int tcount, const EngineContext *ctx,
     op_feq_s: {
         int rd = ip[-1].rd, rs1 = ip[-1].rs1, rs2 = ip[-1].rs2;
         FOR_EACH_LANE { GPR(rd, _li) = FR(rs1, _li) == FR(rs2, _li) ? 1 : 0; PC(_li) += 4; }
-         goto *ip++->handler;
+         NEXT();
     }
     op_flt_s: {
         int rd = ip[-1].rd, rs1 = ip[-1].rs1, rs2 = ip[-1].rs2;
         FOR_EACH_LANE { GPR(rd, _li) = FR(rs1, _li) < FR(rs2, _li) ? 1 : 0; PC(_li) += 4; }
-         goto *ip++->handler;
+         NEXT();
     }
     op_fle_s: {
         int rd = ip[-1].rd, rs1 = ip[-1].rs1, rs2 = ip[-1].rs2;
         FOR_EACH_LANE { GPR(rd, _li) = FR(rs1, _li) <= FR(rs2, _li) ? 1 : 0; PC(_li) += 4; }
-         goto *ip++->handler;
+         NEXT();
     }
 
     /* ============================================================
@@ -811,12 +825,12 @@ int engine_exec(ThOp *code, int tcount, const EngineContext *ctx,
     op_fcvt_s_w: {
         int rd = ip[-1].rd, rs1 = ip[-1].rs1;
         FOR_EACH_LANE { FR(rd, _li) = (float)(int32_t)GPR(rs1, _li); PC(_li) += 4; }
-          goto *ip++->handler;
+          NEXT();
     }
     op_fcvt_s_wu: {
         int rd = ip[-1].rd, rs1 = ip[-1].rs1;
         FOR_EACH_LANE { FR(rd, _li) = (float)GPR(rs1, _li); PC(_li) += 4; }
-          goto *ip++->handler;
+          NEXT();
     }
     op_fcvt_w_s: {
         int rd = ip[-1].rd, rs1 = ip[-1].rs1;
@@ -827,7 +841,7 @@ int engine_exec(ThOp *code, int tcount, const EngineContext *ctx,
                 (f > 2147483648.0f ? 0x7FFFFFFF : (f < -2147483648.0f ? (int32_t)0x80000000 : (int32_t)f)));
             PC(_li) += 4;
         }
-          goto *ip++->handler;
+          NEXT();
     }
     op_fcvt_wu_s: {
         int rd = ip[-1].rd, rs1 = ip[-1].rs1;
@@ -837,19 +851,19 @@ int engine_exec(ThOp *code, int tcount, const EngineContext *ctx,
                 (f < 0.0f ? 0 : (f > 4294967296.0f ? 0xFFFFFFFF : (uint32_t)f));
             PC(_li) += 4;
         }
-          goto *ip++->handler;
+          NEXT();
     }
 
     /* 数据移动 */
     op_fmv_w_x: {
         int rd = ip[-1].rd, rs1 = ip[-1].rs1;
         FOR_EACH_LANE { FPR(rd, _li) = GPR(rs1, _li); PC(_li) += 4; }
-         goto *ip++->handler;
+         NEXT();
     }
     op_fmv_x_w: {
         int rd = ip[-1].rd, rs1 = ip[-1].rs1;
         FOR_EACH_LANE { GPR(rd, _li) = FPR(rs1, _li); PC(_li) += 4; }
-         goto *ip++->handler;
+         NEXT();
     }
 
     /* fclass */
@@ -863,7 +877,7 @@ int engine_exec(ThOp *code, int tcount, const EngineContext *ctx,
             else r = sgn ? (1 << 1) : (1 << 6);
             GPR(rd, _li) = (uint32_t)r; PC(_li) += 4;
         }
-         goto *ip++->handler;
+         NEXT();
     }
 
     /* ============================================================
@@ -873,7 +887,7 @@ int engine_exec(ThOp *code, int tcount, const EngineContext *ctx,
     op_##name: { \
         int rd = ip[-1].rd, rs1 = ip[-1].rs1; \
         FOR_EACH_LANE { float v = FR(rs1, _li); FR(rd, _li) = expr; PC(_li) += 4; } \
-         goto *ip++->handler; \
+         NEXT(); \
     }
     SCI(fexp_s,     fastexp(v))
     SCI(fln_s,      logf(v))           /* libm: 无快速近似 */
@@ -902,7 +916,7 @@ int engine_exec(ThOp *code, int tcount, const EngineContext *ctx,
             }
             GPR(rd, _li) = old; PC(_li) += 4;
         }
-         goto *ip++->handler;
+         NEXT();
     }
     op_csrrs: {
         uint16_t csr = (uint16_t)ip[-1].imm;
@@ -917,7 +931,7 @@ int engine_exec(ThOp *code, int tcount, const EngineContext *ctx,
             }
             GPR(rd, _li) = old; PC(_li) += 4;
         }
-         goto *ip++->handler;
+         NEXT();
     }
     op_csrrc: {
         uint16_t csr = (uint16_t)ip[-1].imm;
@@ -932,7 +946,7 @@ int engine_exec(ThOp *code, int tcount, const EngineContext *ctx,
             }
             GPR(rd, _li) = old; PC(_li) += 4;
         }
-         goto *ip++->handler;
+         NEXT();
     }
     op_csrrwi: {
         uint16_t csr = (uint16_t)ip[-1].imm;
@@ -947,7 +961,7 @@ int engine_exec(ThOp *code, int tcount, const EngineContext *ctx,
             }
             GPR(rd, _li) = old; PC(_li) += 4;
         }
-         goto *ip++->handler;
+         NEXT();
     }
     op_csrrsi: {
         uint16_t csr = (uint16_t)ip[-1].imm;
@@ -962,7 +976,7 @@ int engine_exec(ThOp *code, int tcount, const EngineContext *ctx,
             }
             GPR(rd, _li) = old; PC(_li) += 4;
         }
-         goto *ip++->handler;
+         NEXT();
     }
     op_csrrci: {
         uint16_t csr = (uint16_t)ip[-1].imm;
@@ -977,7 +991,7 @@ int engine_exec(ThOp *code, int tcount, const EngineContext *ctx,
             }
             GPR(rd, _li) = old; PC(_li) += 4;
         }
-         goto *ip++->handler;
+         NEXT();
     }
 
     /* ============================================================
@@ -990,7 +1004,7 @@ int engine_exec(ThOp *code, int tcount, const EngineContext *ctx,
             uint16_t bf = (uint16_t)(FPR(rs1, _li) >> 16);
             FPR(rd, _li) = bf16_to_f32(bf); PC(_li) += 4;
         }
-         goto *ip++->handler;
+         NEXT();
     }
     op_fcvt_bf16_s: {
         int rd = ip[-1].rd, rs1 = ip[-1].rs1;
@@ -998,7 +1012,7 @@ int engine_exec(ThOp *code, int tcount, const EngineContext *ctx,
             uint16_t bf = f32_to_bf16(FPR(rs1, _li));
             FPR(rd, _li) = (FPR(rd, _li) & 0xFFFF) | ((uint32_t)bf << 16); PC(_li) += 4;
         }
-         goto *ip++->handler;
+         NEXT();
     }
     op_fcvt_s_e4m3: {
         int rd = ip[-1].rd, rs1 = ip[-1].rs1;
@@ -1006,7 +1020,7 @@ int engine_exec(ThOp *code, int tcount, const EngineContext *ctx,
             uint8_t e4 = (uint8_t)(FPR(rs1, _li) >> 24);
             FPR(rd, _li) = e4m3_to_f32(e4); PC(_li) += 4;
         }
-         goto *ip++->handler;
+         NEXT();
     }
     op_fcvt_e4m3_s: {
         int rd = ip[-1].rd, rs1 = ip[-1].rs1;
@@ -1014,7 +1028,7 @@ int engine_exec(ThOp *code, int tcount, const EngineContext *ctx,
             uint8_t e4 = f32_to_e4m3(FPR(rs1, _li));
             FPR(rd, _li) = (FPR(rd, _li) & 0xFFFFFF) | ((uint32_t)e4 << 24); PC(_li) += 4;
         }
-         goto *ip++->handler;
+         NEXT();
     }
     op_fcvt_s_e5m2: {
         int rd = ip[-1].rd, rs1 = ip[-1].rs1;
@@ -1022,7 +1036,7 @@ int engine_exec(ThOp *code, int tcount, const EngineContext *ctx,
             uint8_t e5 = (uint8_t)(FPR(rs1, _li) >> 24);
             FPR(rd, _li) = e5m2_to_f32(e5); PC(_li) += 4;
         }
-         goto *ip++->handler;
+         NEXT();
     }
     op_fcvt_e5m2_s: {
         int rd = ip[-1].rd, rs1 = ip[-1].rs1;
@@ -1030,7 +1044,7 @@ int engine_exec(ThOp *code, int tcount, const EngineContext *ctx,
             uint8_t e5 = f32_to_e5m2(FPR(rs1, _li));
             FPR(rd, _li) = (FPR(rd, _li) & 0xFFFFFF) | ((uint32_t)e5 << 24); PC(_li) += 4;
         }
-         goto *ip++->handler;
+         NEXT();
     }
     op_fcvt_s_e2m1: {
         int rd = ip[-1].rd, rs1 = ip[-1].rs1;
@@ -1038,7 +1052,7 @@ int engine_exec(ThOp *code, int tcount, const EngineContext *ctx,
             uint8_t e2 = (uint8_t)(FPR(rs1, _li) >> 24);
             FPR(rd, _li) = e2m1_to_f32(e2); PC(_li) += 4;
         }
-         goto *ip++->handler;
+         NEXT();
     }
     op_fcvt_e2m1_s: {
         int rd = ip[-1].rd, rs1 = ip[-1].rs1;
@@ -1046,7 +1060,7 @@ int engine_exec(ThOp *code, int tcount, const EngineContext *ctx,
             uint8_t e2 = f32_to_e2m1(FPR(rs1, _li));
             FPR(rd, _li) = (FPR(rd, _li) & 0xFFFFFF) | ((uint32_t)e2 << 24); PC(_li) += 4;
         }
-         goto *ip++->handler;
+         NEXT();
     }
 
     /* ============================================================

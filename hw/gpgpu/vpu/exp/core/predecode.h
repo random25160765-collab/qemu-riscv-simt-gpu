@@ -66,8 +66,8 @@ static inline ThOp *simd_predecode(SIMDDecoder *d, GPGPUState *s,
         case 0x23: code[i].imm = immS(inst); break;
         case 0x33: code[i].imm = 0; break;
         case 0x73:
-            if ((inst & 0xFE00707F) == 0x00100073) code[i].imm = 0;
-            else code[i].imm = immCSR(inst); break;
+            if (inst == 0x00100073) { code[i].imm = 0; }    /* ebreak */
+            else { code[i].imm = immCSR(inst); } break;
         case 0x07: code[i].imm = immI(inst); break;
         case 0x27: code[i].imm = immS(inst); break;
         default:   code[i].imm = 0; break;
