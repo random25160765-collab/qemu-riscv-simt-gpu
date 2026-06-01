@@ -109,12 +109,33 @@ int engine_exec(ThOp *code, int tcount, const EngineContext *ctx,
     struct { int32_t ft_idx; uint32_t mask; } _stk[SIMT_STACK_MAX];
     int _sdepth = 0;
 
-    /* === lazy init: 填充 dispatch 表 + 解析 handler === */
+    /* === lazy init: 填充 dispatch 表 === */
     if (!dispatch_ready) {
         size_t di = 0;
         #define X(name, pattern, op_type, imm_fn) dispatch[di++] = &&op_##name;
         INSTRUCTION_LIST
         #undef X
+
+        /* 特性开关: 直接改 dispatch 表, 热路径零开销 */
+        if (!s->cfg.features.sfu) {
+            for (int _j = 0; _j < NUM_OF_INST; _j++) {
+                void *h = dispatch[_j];
+                if (h == &&op_fexp_s || h == &&op_fln_s || h == &&op_frcp_s ||
+                    h == &&op_frsqrt_s || h == &&op_ftanh_s || h == &&op_fsigmoid_s ||
+                    h == &&op_fsin_s || h == &&op_fcos_s)
+                    dispatch[_j] = &&op_illegal;
+            }
+        }
+        if (!s->cfg.features.lp) {
+            for (int _j = 0; _j < NUM_OF_INST; _j++) {
+                void *h = dispatch[_j];
+                if (h == &&op_fcvt_s_bf16 || h == &&op_fcvt_bf16_s ||
+                    h == &&op_fcvt_s_e4m3 || h == &&op_fcvt_e4m3_s ||
+                    h == &&op_fcvt_s_e5m2 || h == &&op_fcvt_e5m2_s ||
+                    h == &&op_fcvt_s_e2m1 || h == &&op_fcvt_e2m1_s)
+                    dispatch[_j] = &&op_illegal;
+            }
+        }
         dispatch_ready = 1;
     }
 

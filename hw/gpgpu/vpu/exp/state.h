@@ -14,6 +14,7 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include "config.h"
 
 /*
  * ============================================================================
@@ -76,10 +77,10 @@ typedef struct GPGPUSIMTContext {
  */
 typedef struct GPGPUState {
     /* 设备配置 */
-    uint32_t num_cus;
-    uint32_t warps_per_cu;
+    vpu_config_t cfg;
     uint32_t warp_size;
     uint64_t vram_size;
+
 
     /* VRAM (本地堆分配) */
     uint8_t *vram_ptr;

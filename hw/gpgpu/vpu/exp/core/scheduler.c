@@ -192,10 +192,12 @@ int scheduler_run_kernel(GPGPUState *s)
     ThOp *code = scheduler_predecode(s, kern_addr, 4096, &tcount);
     if (!code) return -1;
 
-    /* DFG fusion pass */
-    int fused_count = 0;
-    ThOp *fused = fusion_pass(code, tcount, &fused_count);
-    if (fused) { free(code); code = fused; tcount = fused_count; }
+    /* DFG fusion pass (cold path, 一次 kernel launch) */
+    if (s->cfg.features.fusion) {
+        int fused_count = 0;
+        ThOp *fused = fusion_pass(code, tcount, &fused_count);
+        if (fused) { free(code); code = fused; tcount = fused_count; }
+    }
 
     /* 收集所有 block */
     uint32_t total_blocks = gd[0] * gd[1] * gd[2];
@@ -223,9 +225,10 @@ int scheduler_run_kernel(GPGPUState *s)
         }
     }
 
-    /* 线程池并行: N workers 原子争抢 block */
+    /* 线程池: CU 配置 >0 时限制并发, 否则用 CPU 核数 */
     if (num_blocks > 1) {
-        int n_workers = (int)sysconf(_SC_NPROCESSORS_ONLN);
+        int n_workers = s->cfg.num_cus ? (int)(s->cfg.num_cus * s->cfg.warps_per_cu) : 0;
+        if (!n_workers) n_workers = (int)sysconf(_SC_NPROCESSORS_ONLN);
         if (n_workers < 1) n_workers = 4;
         if (n_workers > num_blocks) n_workers = num_blocks;
 

@@ -5,11 +5,11 @@ CC       = gcc
 RV_CC    = riscv64-unknown-elf-gcc
 RV_OBJCOPY = riscv64-unknown-elf-objcopy
 
-CFLAGS   = -Wall -Wextra -O3 -mavx2 -g -fno-strict-aliasing -I. -Icore -Iproto
-LDFLAGS  = -lm -lrt -lpthread
+CFLAGS   = -Wall -Wextra -O3 -mavx2 -g -fno-strict-aliasing -I. -Icore -Iproto -I/usr/include/lua5.4
+LDFLAGS  = -lm -lrt -lpthread -llua5.4 -ldl
 RV_CFLAGS = -march=rv32imf -mabi=ilp32 -nostdlib -Ttext=0x0 -Wl,--build-id=none
 
-SRCS  = main.c test_runner.c
+SRCS  = main.c test_runner.c config.c
 SRCS += core/engine.c core/scheduler.c core/fusion.c
 SRCS += core/decode_trie.c core/lpfp.c core/memory.c core/proto.c
 OBJS  = $(SRCS:.c=.o)
