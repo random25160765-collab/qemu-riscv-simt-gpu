@@ -103,7 +103,8 @@ typedef struct GPGPUState {
     GPGPUSIMTContext simt;
 
     /* 性能计数器 (独立测试专用) */
-    uint64_t inst_count;       /* 总执行指令数 */
+    uint64_t inst_count;       /* 总 lane-指令数 */
+    uint64_t fp_count;         /* FP 操作数 */
     uint64_t cycle_count;      /* 总执行周期数 */
 } GPGPUState;
 

@@ -82,17 +82,23 @@ static int run_kernel(GPGPUState *s, const char *kern_path,
     load_kernel(kern_path, s, kernel_addr);
 
     s->inst_count = 0;
+    s->fp_count   = 0;
     clock_gettime(CLOCK_MONOTONIC, &t0);
     int ret = scheduler_run_kernel(s);
     clock_gettime(CLOCK_MONOTONIC, &t1);
 
     double elapsed = (t1.tv_sec - t0.tv_sec) + (t1.tv_nsec - t0.tv_nsec) * 1e-9;
-    double mips = (elapsed > 0) ? (s->inst_count / elapsed / 1e6) : 0;
-    uint32_t total_threads = grid_x * grid_y * grid_z * block_x * block_y * block_z;
+    double mflops = (elapsed > 0) ? (s->fp_count / elapsed / 1e6) : 0;
+    uint32_t total_blocks = grid_x * grid_y * grid_z;
 
-    printf("  %5.0fus  %6.0f MIPS  %lu insts  %u threads\n",
-           elapsed * 1e6, mips,
-           (unsigned long)s->inst_count, total_threads);
+    if (mflops >= 1000.0)
+        printf("  %5.0fus  %6.1f GFLOPS  %lu flops  %u blocks\n",
+               elapsed * 1e6, mflops / 1000.0,
+               (unsigned long)s->fp_count, total_blocks);
+    else
+        printf("  %5.0fus  %6.1f MFLOPS  %lu flops  %u blocks\n",
+               elapsed * 1e6, mflops,
+               (unsigned long)s->fp_count, total_blocks);
 
     return ret;
 }
@@ -318,14 +324,62 @@ static TestResult test_matmul(GPGPUState *s)
 {
     TestResult r = { .name = "matmul", .errors = 0 };
     uint32_t M = 1, K = 2, N = 1, kern = 0x500000;
+    *(uint32_t *)(s->vram_ptr + 0x0) = K;
     ((float *)(s->vram_ptr + 0x100000))[0] = 1; ((float *)(s->vram_ptr + 0x100000))[1] = 2;
     ((float *)(s->vram_ptr + 0x200000))[0] = 3; ((float *)(s->vram_ptr + 0x200000))[1] = 4;
-    if (run_kernel(s, "kernels/matmul.bin", kern, M, K, 1, N, 1, 1) != 0) {
+    if (run_kernel(s, "kernels/matmul.bin", kern, M, 1, 1, N, 1, 1) != 0) {
         r.errors = -1; return r;
     }
     float exp = 1 * 3 + 2 * 4, got = ((float *)(s->vram_ptr + 0x300000))[0];
     if (fabsf(got - exp) > 1e-3f) { r.errors++; printf("  exp %.4f got %.4f\n", exp, got); }
     printf("  %s: C[0]=%.4f\n", r.errors == 0 ? "PASS" : "FAIL", got);
+    return r;
+}
+
+/* ============================================================
+ * 并行性能测试
+ * ============================================================ */
+
+static TestResult test_perf_vecmul(GPGPUState *s)
+{
+    TestResult r = { .name = "perf_vecmul 65536", .errors = 0 };
+    uint32_t N = 65536, kern = 0x500000;
+    for (uint32_t i = 0; i < N; i++) {
+        ((float *)(s->vram_ptr + 0x100000))[i] = (float)(i % 256);
+        ((float *)(s->vram_ptr + 0x200000))[i] = 3.0f;
+    }
+    /* grid=(N/32,1,1) blocks, block=(32,1,1) threads */
+    if (run_kernel(s, "kernels/vecmul.bin", kern, N/32, 1, 1, 32, 1, 1) != 0) {
+        r.errors = -1; return r;
+    }
+    /* spot-check */
+    for (uint32_t i = 0; i < N; i += 1024) {
+        float exp = (float)(i % 256) * 3.0f;
+        float got = ((float *)(s->vram_ptr + 0x300000))[i];
+        if (fabsf(got - exp) > 1e-4f) { r.errors++; break; }
+    }
+    printf("  %s: %u elements\n", r.errors == 0 ? "PASS" : "FAIL", N);
+    return r;
+}
+
+static TestResult test_perf_matmul(GPGPUState *s)
+{
+    TestResult r = { .name = "perf_matmul 128", .errors = 0 };
+    uint32_t M = 128, K = 128, N = 128, kern = 0x500000;
+    *(uint32_t *)(s->vram_ptr + 0x0) = K;
+    for (uint32_t i = 0; i < M * K; i++)
+        ((float *)(s->vram_ptr + 0x100000))[i] = 1.0f;
+    for (uint32_t i = 0; i < K * N; i++)
+        ((float *)(s->vram_ptr + 0x200000))[i] = 1.0f;
+    /* grid=(M,1,1), block=(N,1,1) → M*N threads, M blocks */
+    if (run_kernel(s, "kernels/matmul.bin", kern, M, 1, 1, N, 1, 1) != 0) {
+        r.errors = -1; return r;
+    }
+    /* C[i][j] should be K for all i,j */
+    float got = ((float *)(s->vram_ptr + 0x300000))[0];
+    float exp = (float)K;
+    if (fabsf(got - exp) > 1.0f) { r.errors++; printf("  C[0]=%.2f exp=%.2f\n", got, exp); }
+    printf("  %s: C[0]=%.2f (exp %.0f)\n", r.errors == 0 ? "PASS" : "FAIL", got, exp);
     return r;
 }
 
@@ -460,6 +514,10 @@ int test_runner_run(GPGPUState *s)
     RUN("Test 13: Softmax",              test_softmax);
     RUN("Test 14: Softmax_norm",         test_softmax_norm);
     RUN("Test 15: Conv2d",               test_conv2d);
+
+    printf("\n=== Parallel Performance ===\n\n");
+    RUN("Perf: vecmul 65536",              test_perf_vecmul);
+    RUN("Perf: matmul 128x128x128",        test_perf_matmul);
 
     #undef RUN
 

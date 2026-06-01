@@ -131,7 +131,7 @@ int engine_exec(ThOp *code, int tcount, const EngineContext *ctx,
     }
 
     ip = code;
-    s->inst_count += __builtin_popcount(_active); goto *ip++->handler;
+    __sync_fetch_and_add(&s->inst_count, __builtin_popcount(_active)); goto *ip++->handler;
 
     /* ============================================================
      * 无条件跳转 (所有 lane 统一, 不发散)
@@ -140,14 +140,14 @@ int engine_exec(ThOp *code, int tcount, const EngineContext *ctx,
         int rd = ip[-1].rd, imm = ip[-1].imm;
         FOR_EACH_LANE { GPR(rd, _li) = PC(_li) + 4; PC(_li) += imm; }
         ip = &code[ip[-1].branch_tgt];
-        s->inst_count += __builtin_popcount(_active); goto *ip++->handler;
+        __sync_fetch_and_add(&s->inst_count, __builtin_popcount(_active)); goto *ip++->handler;
     }
     op_jalr: {
         int rd = ip[-1].rd, rs1 = ip[-1].rs1, imm = ip[-1].imm;
         int32_t target = (int32_t)(GPR(rs1, 0) + imm) & ~1;
         FOR_EACH_LANE { GPR(rd, _li) = PC(_li) + 4; PC(_li) = (uint32_t)target; }
         ip = &code[(target - s->kernel.kernel_addr) / 4];
-        s->inst_count += __builtin_popcount(_active); goto *ip++->handler;
+        __sync_fetch_and_add(&s->inst_count, __builtin_popcount(_active)); goto *ip++->handler;
     }
 
     /* ============================================================
@@ -188,7 +188,7 @@ int engine_exec(ThOp *code, int tcount, const EngineContext *ctx,
         } else { \
             _active = _not_taken; \
         } \
-        s->inst_count += __builtin_popcount(_active); goto *ip++->handler; \
+        __sync_fetch_and_add(&s->inst_count, __builtin_popcount(_active)); goto *ip++->handler; \
     } while(0)
 
     op_beq:  DIV_BR(_a == _b);
@@ -210,7 +210,7 @@ int engine_exec(ThOp *code, int tcount, const EngineContext *ctx,
             GPR(rd, _li) = (uint32_t)((int32_t)(v << 24) >> 24);
             PC(_li) += 4;
         }
-        s->inst_count += __builtin_popcount(_active); goto *ip++->handler;
+        __sync_fetch_and_add(&s->inst_count, __builtin_popcount(_active)); goto *ip++->handler;
     }
     op_lh: {
         int rd = ip[-1].rd, rs1 = ip[-1].rs1, imm = ip[-1].imm;
@@ -220,7 +220,7 @@ int engine_exec(ThOp *code, int tcount, const EngineContext *ctx,
             GPR(rd, _li) = (uint32_t)((int32_t)(v << 16) >> 16);
             PC(_li) += 4;
         }
-        s->inst_count += __builtin_popcount(_active); goto *ip++->handler;
+        __sync_fetch_and_add(&s->inst_count, __builtin_popcount(_active)); goto *ip++->handler;
     }
     op_lw: {
         int rd = ip[-1].rd, rs1 = ip[-1].rs1, imm = ip[-1].imm;
@@ -229,7 +229,7 @@ int engine_exec(ThOp *code, int tcount, const EngineContext *ctx,
             GPR(rd, _li) = ctrl_read(ctx, a, _li);
             PC(_li) += 4;
         }
-        s->inst_count += __builtin_popcount(_active); goto *ip++->handler;
+        __sync_fetch_and_add(&s->inst_count, __builtin_popcount(_active)); goto *ip++->handler;
     }
     op_lbu: {
         int rd = ip[-1].rd, rs1 = ip[-1].rs1, imm = ip[-1].imm;
@@ -238,7 +238,7 @@ int engine_exec(ThOp *code, int tcount, const EngineContext *ctx,
             GPR(rd, _li) = (uint32_t)gpu_read(s, a, 1);
             PC(_li) += 4;
         }
-        s->inst_count += __builtin_popcount(_active); goto *ip++->handler;
+        __sync_fetch_and_add(&s->inst_count, __builtin_popcount(_active)); goto *ip++->handler;
     }
     op_lhu: {
         int rd = ip[-1].rd, rs1 = ip[-1].rs1, imm = ip[-1].imm;
@@ -247,24 +247,24 @@ int engine_exec(ThOp *code, int tcount, const EngineContext *ctx,
             GPR(rd, _li) = (uint32_t)gpu_read(s, a, 2);
             PC(_li) += 4;
         }
-        s->inst_count += __builtin_popcount(_active); goto *ip++->handler;
+        __sync_fetch_and_add(&s->inst_count, __builtin_popcount(_active)); goto *ip++->handler;
     }
 
     /* Store */
     op_sb: {
         int rs1 = ip[-1].rs1, rs2 = ip[-1].rs2, imm = ip[-1].imm;
         FOR_EACH_LANE { gpu_write(s, GPR(rs1, _li) + imm, 1, GPR(rs2, _li)); PC(_li) += 4; }
-        s->inst_count += __builtin_popcount(_active); goto *ip++->handler;
+        __sync_fetch_and_add(&s->inst_count, __builtin_popcount(_active)); goto *ip++->handler;
     }
     op_sh: {
         int rs1 = ip[-1].rs1, rs2 = ip[-1].rs2, imm = ip[-1].imm;
         FOR_EACH_LANE { gpu_write(s, GPR(rs1, _li) + imm, 2, GPR(rs2, _li)); PC(_li) += 4; }
-        s->inst_count += __builtin_popcount(_active); goto *ip++->handler;
+        __sync_fetch_and_add(&s->inst_count, __builtin_popcount(_active)); goto *ip++->handler;
     }
     op_sw: {
         int rs1 = ip[-1].rs1, rs2 = ip[-1].rs2, imm = ip[-1].imm;
         FOR_EACH_LANE { gpu_write(s, GPR(rs1, _li) + imm, 4, GPR(rs2, _li)); PC(_li) += 4; }
-        s->inst_count += __builtin_popcount(_active); goto *ip++->handler;
+        __sync_fetch_and_add(&s->inst_count, __builtin_popcount(_active)); goto *ip++->handler;
     }
 
     /* ============================================================
@@ -273,12 +273,12 @@ int engine_exec(ThOp *code, int tcount, const EngineContext *ctx,
     op_lui: {
         int rd = ip[-1].rd; uint32_t v = (uint32_t)ip[-1].imm;
         FOR_EACH_LANE { GPR(rd, _li) = v; PC(_li) += 4; }
-        s->inst_count += __builtin_popcount(_active); goto *ip++->handler;
+        __sync_fetch_and_add(&s->inst_count, __builtin_popcount(_active)); goto *ip++->handler;
     }
     op_auipc: {
         int rd = ip[-1].rd; uint32_t v = (uint32_t)ip[-1].imm;
         FOR_EACH_LANE { GPR(rd, _li) = PC(_li) + v; PC(_li) += 4; }
-        s->inst_count += __builtin_popcount(_active); goto *ip++->handler;
+        __sync_fetch_and_add(&s->inst_count, __builtin_popcount(_active)); goto *ip++->handler;
     }
 
     /* ============================================================
@@ -288,7 +288,7 @@ int engine_exec(ThOp *code, int tcount, const EngineContext *ctx,
     op_##name: { \
         int rd = ip[-1].rd, rs1 = ip[-1].rs1, imm = ip[-1].imm; \
         FOR_EACH_LANE { GPR(rd, _li) = GPR(rs1, _li) op (uint32_t)imm; PC(_li) += 4; } \
-        s->inst_count += __builtin_popcount(_active); goto *ip++->handler; \
+        __sync_fetch_and_add(&s->inst_count, __builtin_popcount(_active)); goto *ip++->handler; \
     }
     ALUI(addi, +) ALUI(xori, ^) ALUI(ori, |) ALUI(andi, &)
     #undef ALUI
@@ -296,27 +296,27 @@ int engine_exec(ThOp *code, int tcount, const EngineContext *ctx,
     op_slti: {
         int rd = ip[-1].rd, rs1 = ip[-1].rs1, imm = ip[-1].imm;
         FOR_EACH_LANE { GPR(rd, _li) = ((int32_t)GPR(rs1, _li) < imm) ? 1 : 0; PC(_li) += 4; }
-        s->inst_count += __builtin_popcount(_active); goto *ip++->handler;
+        __sync_fetch_and_add(&s->inst_count, __builtin_popcount(_active)); goto *ip++->handler;
     }
     op_sltiu: {
         int rd = ip[-1].rd, rs1 = ip[-1].rs1, imm = ip[-1].imm;
         FOR_EACH_LANE { GPR(rd, _li) = (GPR(rs1, _li) < (uint32_t)imm) ? 1 : 0; PC(_li) += 4; }
-        s->inst_count += __builtin_popcount(_active); goto *ip++->handler;
+        __sync_fetch_and_add(&s->inst_count, __builtin_popcount(_active)); goto *ip++->handler;
     }
     op_slli: {
         int rd = ip[-1].rd, rs1 = ip[-1].rs1, imm = ip[-1].imm;
         FOR_EACH_LANE { GPR(rd, _li) = GPR(rs1, _li) << (imm & 0x1F); PC(_li) += 4; }
-        s->inst_count += __builtin_popcount(_active); goto *ip++->handler;
+        __sync_fetch_and_add(&s->inst_count, __builtin_popcount(_active)); goto *ip++->handler;
     }
     op_srli: {
         int rd = ip[-1].rd, rs1 = ip[-1].rs1, imm = ip[-1].imm;
         FOR_EACH_LANE { GPR(rd, _li) = GPR(rs1, _li) >> (imm & 0x1F); PC(_li) += 4; }
-        s->inst_count += __builtin_popcount(_active); goto *ip++->handler;
+        __sync_fetch_and_add(&s->inst_count, __builtin_popcount(_active)); goto *ip++->handler;
     }
     op_srai: {
         int rd = ip[-1].rd, rs1 = ip[-1].rs1, imm = ip[-1].imm;
         FOR_EACH_LANE { GPR(rd, _li) = (uint32_t)((int32_t)GPR(rs1, _li) >> (imm & 0x1F)); PC(_li) += 4; }
-        s->inst_count += __builtin_popcount(_active); goto *ip++->handler;
+        __sync_fetch_and_add(&s->inst_count, __builtin_popcount(_active)); goto *ip++->handler;
     }
 
     /* ============================================================
@@ -326,7 +326,7 @@ int engine_exec(ThOp *code, int tcount, const EngineContext *ctx,
     op_##name: { \
         int rd = ip[-1].rd, rs1 = ip[-1].rs1, rs2 = ip[-1].rs2; \
         FOR_EACH_LANE { GPR(rd, _li) = GPR(rs1, _li) op GPR(rs2, _li); PC(_li) += 4; } \
-        s->inst_count += __builtin_popcount(_active); goto *ip++->handler; \
+        __sync_fetch_and_add(&s->inst_count, __builtin_popcount(_active)); goto *ip++->handler; \
     }
     ALUR(add, +) ALUR(sub, -) ALUR(xor, ^) ALUR(or, |) ALUR(and, &) ALUR(mul, *)
     #undef ALUR
@@ -334,27 +334,27 @@ int engine_exec(ThOp *code, int tcount, const EngineContext *ctx,
     op_sll: {
         int rd = ip[-1].rd, rs1 = ip[-1].rs1, rs2 = ip[-1].rs2;
         FOR_EACH_LANE { GPR(rd, _li) = GPR(rs1, _li) << (GPR(rs2, _li) & 0x1F); PC(_li) += 4; }
-        s->inst_count += __builtin_popcount(_active); goto *ip++->handler;
+        __sync_fetch_and_add(&s->inst_count, __builtin_popcount(_active)); goto *ip++->handler;
     }
     op_srl: {
         int rd = ip[-1].rd, rs1 = ip[-1].rs1, rs2 = ip[-1].rs2;
         FOR_EACH_LANE { GPR(rd, _li) = GPR(rs1, _li) >> (GPR(rs2, _li) & 0x1F); PC(_li) += 4; }
-        s->inst_count += __builtin_popcount(_active); goto *ip++->handler;
+        __sync_fetch_and_add(&s->inst_count, __builtin_popcount(_active)); goto *ip++->handler;
     }
     op_sra: {
         int rd = ip[-1].rd, rs1 = ip[-1].rs1, rs2 = ip[-1].rs2;
         FOR_EACH_LANE { GPR(rd, _li) = (uint32_t)((int32_t)GPR(rs1, _li) >> (GPR(rs2, _li) & 0x1F)); PC(_li) += 4; }
-        s->inst_count += __builtin_popcount(_active); goto *ip++->handler;
+        __sync_fetch_and_add(&s->inst_count, __builtin_popcount(_active)); goto *ip++->handler;
     }
     op_slt: {
         int rd = ip[-1].rd, rs1 = ip[-1].rs1, rs2 = ip[-1].rs2;
         FOR_EACH_LANE { GPR(rd, _li) = ((int32_t)GPR(rs1, _li) < (int32_t)GPR(rs2, _li)) ? 1 : 0; PC(_li) += 4; }
-        s->inst_count += __builtin_popcount(_active); goto *ip++->handler;
+        __sync_fetch_and_add(&s->inst_count, __builtin_popcount(_active)); goto *ip++->handler;
     }
     op_sltu: {
         int rd = ip[-1].rd, rs1 = ip[-1].rs1, rs2 = ip[-1].rs2;
         FOR_EACH_LANE { GPR(rd, _li) = (GPR(rs1, _li) < GPR(rs2, _li)) ? 1 : 0; PC(_li) += 4; }
-        s->inst_count += __builtin_popcount(_active); goto *ip++->handler;
+        __sync_fetch_and_add(&s->inst_count, __builtin_popcount(_active)); goto *ip++->handler;
     }
 
     /* ============================================================
@@ -363,17 +363,17 @@ int engine_exec(ThOp *code, int tcount, const EngineContext *ctx,
     op_mulh: {
         int rd = ip[-1].rd, rs1 = ip[-1].rs1, rs2 = ip[-1].rs2;
         FOR_EACH_LANE { GPR(rd, _li) = (uint32_t)(((int64_t)(int32_t)GPR(rs1, _li) * (int64_t)(int32_t)GPR(rs2, _li)) >> 32); PC(_li) += 4; }
-        s->inst_count += __builtin_popcount(_active); goto *ip++->handler;
+        __sync_fetch_and_add(&s->inst_count, __builtin_popcount(_active)); goto *ip++->handler;
     }
     op_mulhsu: {
         int rd = ip[-1].rd, rs1 = ip[-1].rs1, rs2 = ip[-1].rs2;
         FOR_EACH_LANE { GPR(rd, _li) = (uint32_t)(((int64_t)(int32_t)GPR(rs1, _li) * (uint64_t)GPR(rs2, _li)) >> 32); PC(_li) += 4; }
-        s->inst_count += __builtin_popcount(_active); goto *ip++->handler;
+        __sync_fetch_and_add(&s->inst_count, __builtin_popcount(_active)); goto *ip++->handler;
     }
     op_mulhu: {
         int rd = ip[-1].rd, rs1 = ip[-1].rs1, rs2 = ip[-1].rs2;
         FOR_EACH_LANE { GPR(rd, _li) = (uint32_t)(((uint64_t)GPR(rs1, _li) * (uint64_t)GPR(rs2, _li)) >> 32); PC(_li) += 4; }
-        s->inst_count += __builtin_popcount(_active); goto *ip++->handler;
+        __sync_fetch_and_add(&s->inst_count, __builtin_popcount(_active)); goto *ip++->handler;
     }
     op_div: {
         int rd = ip[-1].rd, rs1 = ip[-1].rs1, rs2 = ip[-1].rs2;
@@ -381,7 +381,7 @@ int engine_exec(ThOp *code, int tcount, const EngineContext *ctx,
             int32_t a = (int32_t)GPR(rs1, _li), b = (int32_t)GPR(rs2, _li);
             GPR(rd, _li) = b ? (uint32_t)(a / b) : (uint32_t)-1; PC(_li) += 4;
         }
-        s->inst_count += __builtin_popcount(_active); goto *ip++->handler;
+        __sync_fetch_and_add(&s->inst_count, __builtin_popcount(_active)); goto *ip++->handler;
     }
     op_divu: {
         int rd = ip[-1].rd, rs1 = ip[-1].rs1, rs2 = ip[-1].rs2;
@@ -389,7 +389,7 @@ int engine_exec(ThOp *code, int tcount, const EngineContext *ctx,
             uint32_t a = GPR(rs1, _li), b = GPR(rs2, _li);
             GPR(rd, _li) = b ? a / b : 0xFFFFFFFF; PC(_li) += 4;
         }
-        s->inst_count += __builtin_popcount(_active); goto *ip++->handler;
+        __sync_fetch_and_add(&s->inst_count, __builtin_popcount(_active)); goto *ip++->handler;
     }
     op_rem: {
         int rd = ip[-1].rd, rs1 = ip[-1].rs1, rs2 = ip[-1].rs2;
@@ -397,7 +397,7 @@ int engine_exec(ThOp *code, int tcount, const EngineContext *ctx,
             int32_t a = (int32_t)GPR(rs1, _li), b = (int32_t)GPR(rs2, _li);
             GPR(rd, _li) = b ? (uint32_t)(a % b) : GPR(rs1, _li); PC(_li) += 4;
         }
-        s->inst_count += __builtin_popcount(_active); goto *ip++->handler;
+        __sync_fetch_and_add(&s->inst_count, __builtin_popcount(_active)); goto *ip++->handler;
     }
     op_remu: {
         int rd = ip[-1].rd, rs1 = ip[-1].rs1, rs2 = ip[-1].rs2;
@@ -405,7 +405,7 @@ int engine_exec(ThOp *code, int tcount, const EngineContext *ctx,
             uint32_t a = GPR(rs1, _li), b = GPR(rs2, _li);
             GPR(rd, _li) = b ? a % b : a; PC(_li) += 4;
         }
-        s->inst_count += __builtin_popcount(_active); goto *ip++->handler;
+        __sync_fetch_and_add(&s->inst_count, __builtin_popcount(_active)); goto *ip++->handler;
     }
 
     /* ============================================================
@@ -449,7 +449,7 @@ int engine_exec(ThOp *code, int tcount, const EngineContext *ctx,
             _sdepth--;
             _active = _stk[_sdepth].mask;
             ip = &code[_stk[_sdepth].ft_idx];
-            s->inst_count += __builtin_popcount(_active); goto *ip++->handler;
+            __sync_fetch_and_add(&s->inst_count, __builtin_popcount(_active)); goto *ip++->handler;
         }
         return 0;
     }
@@ -459,7 +459,7 @@ int engine_exec(ThOp *code, int tcount, const EngineContext *ctx,
             _sdepth--;
             _active = _stk[_sdepth].mask;
             ip = &code[_stk[_sdepth].ft_idx];
-            s->inst_count += __builtin_popcount(_active); goto *ip++->handler;
+            __sync_fetch_and_add(&s->inst_count, __builtin_popcount(_active)); goto *ip++->handler;
         }
         return 0;
     }
@@ -474,7 +474,7 @@ int engine_exec(ThOp *code, int tcount, const EngineContext *ctx,
             FPR(rd, _li) = *(uint32_t *)(s->vram_ptr + a);
             PC(_li) += 4;
         }
-        s->inst_count += __builtin_popcount(_active); goto *ip++->handler;
+        __sync_fetch_and_add(&s->inst_count, __builtin_popcount(_active)); goto *ip++->handler;
     }
     op_fsw: {
         int rs1 = ip[-1].rs1, rs2 = ip[-1].rs2, imm = ip[-1].imm;
@@ -483,7 +483,7 @@ int engine_exec(ThOp *code, int tcount, const EngineContext *ctx,
             *(uint32_t *)(s->vram_ptr + a) = FPR(rs2, _li);
             PC(_li) += 4;
         }
-        s->inst_count += __builtin_popcount(_active); goto *ip++->handler;
+        __sync_fetch_and_add(&s->inst_count, __builtin_popcount(_active)); goto *ip++->handler;
     }
 
     /* ============================================================
@@ -494,7 +494,8 @@ int engine_exec(ThOp *code, int tcount, const EngineContext *ctx,
         int rd = ip[-1].rd, rs1 = ip[-1].rs1, rs2 = ip[-1].rs2; \
         FOR_EACH_LANE { FR(rd, _li) = FR(rs1, _li) op FR(rs2, _li); } \
         FOR_EACH_LANE PC(_li) += 4; \
-        s->inst_count += __builtin_popcount(_active); goto *ip++->handler; \
+        __sync_fetch_and_add(&s->fp_count, __builtin_popcount(_active)); \
+        __sync_fetch_and_add(&s->inst_count, __builtin_popcount(_active)); goto *ip++->handler; \
     }
     FPBIN(fadd_s, +) FPBIN(fsub_s, -) FPBIN(fmul_s, *) FPBIN(fdiv_s, /)
     #undef FPBIN
@@ -504,61 +505,61 @@ int engine_exec(ThOp *code, int tcount, const EngineContext *ctx,
         int rd = ip[-1].rd, rs1 = ip[-1].rs1, rs2 = ip[-1].rs2, rs3 = ip[-1].rs3;
         FOR_EACH_LANE { FR(rd, _li) = FR(rs1, _li) * FR(rs2, _li) + FR(rs3, _li); }
         FOR_EACH_LANE PC(_li) += 4;
-        s->inst_count += __builtin_popcount(_active); goto *ip++->handler;
+        __sync_fetch_and_add(&s->fp_count, 2 * __builtin_popcount(_active)); __sync_fetch_and_add(&s->inst_count, __builtin_popcount(_active)); goto *ip++->handler;
     }
     op_fmsub_s: {
         int rd = ip[-1].rd, rs1 = ip[-1].rs1, rs2 = ip[-1].rs2, rs3 = ip[-1].rs3;
         FOR_EACH_LANE { FR(rd, _li) = FR(rs1, _li) * FR(rs2, _li) - FR(rs3, _li); }
         FOR_EACH_LANE PC(_li) += 4;
-        s->inst_count += __builtin_popcount(_active); goto *ip++->handler;
+        __sync_fetch_and_add(&s->fp_count, 2 * __builtin_popcount(_active)); __sync_fetch_and_add(&s->inst_count, __builtin_popcount(_active)); goto *ip++->handler;
     }
     op_fnmsub_s: {
         int rd = ip[-1].rd, rs1 = ip[-1].rs1, rs2 = ip[-1].rs2, rs3 = ip[-1].rs3;
         FOR_EACH_LANE { FR(rd, _li) = -(FR(rs1, _li) * FR(rs2, _li) - FR(rs3, _li)); }
         FOR_EACH_LANE PC(_li) += 4;
-        s->inst_count += __builtin_popcount(_active); goto *ip++->handler;
+        __sync_fetch_and_add(&s->fp_count, 2 * __builtin_popcount(_active)); __sync_fetch_and_add(&s->inst_count, __builtin_popcount(_active)); goto *ip++->handler;
     }
     op_fnmadd_s: {
         int rd = ip[-1].rd, rs1 = ip[-1].rs1, rs2 = ip[-1].rs2, rs3 = ip[-1].rs3;
         FOR_EACH_LANE { FR(rd, _li) = -(FR(rs1, _li) * FR(rs2, _li) + FR(rs3, _li)); }
         FOR_EACH_LANE PC(_li) += 4;
-        s->inst_count += __builtin_popcount(_active); goto *ip++->handler;
+        __sync_fetch_and_add(&s->fp_count, 2 * __builtin_popcount(_active)); __sync_fetch_and_add(&s->inst_count, __builtin_popcount(_active)); goto *ip++->handler;
     }
 
     /* fsqrt — per-lane libm */
     op_fsqrt_s: {
         int rd = ip[-1].rd, rs1 = ip[-1].rs1;
         FOR_EACH_LANE { FR(rd, _li) = sqrtf(FR(rs1, _li)); PC(_li) += 4; }
-        s->inst_count += __builtin_popcount(_active); goto *ip++->handler;
+        __sync_fetch_and_add(&s->fp_count, __builtin_popcount(_active)); __sync_fetch_and_add(&s->inst_count, __builtin_popcount(_active)); goto *ip++->handler;
     }
 
     /* 符号注入 — 位操作 */
     op_fsgnj_s: {
         int rd = ip[-1].rd, rs1 = ip[-1].rs1, rs2 = ip[-1].rs2;
         FOR_EACH_LANE { FPR(rd, _li) = (FPR(rs1, _li) & ~0x80000000) | (FPR(rs2, _li) & 0x80000000); PC(_li) += 4; }
-        s->inst_count += __builtin_popcount(_active); goto *ip++->handler;
+        __sync_fetch_and_add(&s->inst_count, __builtin_popcount(_active)); goto *ip++->handler;
     }
     op_fsgnjn_s: {
         int rd = ip[-1].rd, rs1 = ip[-1].rs1, rs2 = ip[-1].rs2;
         FOR_EACH_LANE { FPR(rd, _li) = (FPR(rs1, _li) & ~0x80000000) | ((~FPR(rs2, _li)) & 0x80000000); PC(_li) += 4; }
-        s->inst_count += __builtin_popcount(_active); goto *ip++->handler;
+        __sync_fetch_and_add(&s->inst_count, __builtin_popcount(_active)); goto *ip++->handler;
     }
     op_fsgnjx_s: {
         int rd = ip[-1].rd, rs1 = ip[-1].rs1, rs2 = ip[-1].rs2;
         FOR_EACH_LANE { FPR(rd, _li) = FPR(rs1, _li) ^ (FPR(rs2, _li) & 0x80000000); PC(_li) += 4; }
-        s->inst_count += __builtin_popcount(_active); goto *ip++->handler;
+        __sync_fetch_and_add(&s->inst_count, __builtin_popcount(_active)); goto *ip++->handler;
     }
 
     /* 最值 */
     op_fmin_s: {
         int rd = ip[-1].rd, rs1 = ip[-1].rs1, rs2 = ip[-1].rs2;
         FOR_EACH_LANE { FR(rd, _li) = FR(rs1, _li) < FR(rs2, _li) ? FR(rs1, _li) : FR(rs2, _li); PC(_li) += 4; }
-        s->inst_count += __builtin_popcount(_active); goto *ip++->handler;
+        __sync_fetch_and_add(&s->fp_count, __builtin_popcount(_active)); __sync_fetch_and_add(&s->inst_count, __builtin_popcount(_active)); goto *ip++->handler;
     }
     op_fmax_s: {
         int rd = ip[-1].rd, rs1 = ip[-1].rs1, rs2 = ip[-1].rs2;
         FOR_EACH_LANE { FR(rd, _li) = FR(rs1, _li) > FR(rs2, _li) ? FR(rs1, _li) : FR(rs2, _li); PC(_li) += 4; }
-        s->inst_count += __builtin_popcount(_active); goto *ip++->handler;
+        __sync_fetch_and_add(&s->fp_count, __builtin_popcount(_active)); __sync_fetch_and_add(&s->inst_count, __builtin_popcount(_active)); goto *ip++->handler;
     }
 
     /* ============================================================
@@ -567,17 +568,17 @@ int engine_exec(ThOp *code, int tcount, const EngineContext *ctx,
     op_feq_s: {
         int rd = ip[-1].rd, rs1 = ip[-1].rs1, rs2 = ip[-1].rs2;
         FOR_EACH_LANE { GPR(rd, _li) = FR(rs1, _li) == FR(rs2, _li) ? 1 : 0; PC(_li) += 4; }
-        s->inst_count += __builtin_popcount(_active); goto *ip++->handler;
+        __sync_fetch_and_add(&s->inst_count, __builtin_popcount(_active)); goto *ip++->handler;
     }
     op_flt_s: {
         int rd = ip[-1].rd, rs1 = ip[-1].rs1, rs2 = ip[-1].rs2;
         FOR_EACH_LANE { GPR(rd, _li) = FR(rs1, _li) < FR(rs2, _li) ? 1 : 0; PC(_li) += 4; }
-        s->inst_count += __builtin_popcount(_active); goto *ip++->handler;
+        __sync_fetch_and_add(&s->inst_count, __builtin_popcount(_active)); goto *ip++->handler;
     }
     op_fle_s: {
         int rd = ip[-1].rd, rs1 = ip[-1].rs1, rs2 = ip[-1].rs2;
         FOR_EACH_LANE { GPR(rd, _li) = FR(rs1, _li) <= FR(rs2, _li) ? 1 : 0; PC(_li) += 4; }
-        s->inst_count += __builtin_popcount(_active); goto *ip++->handler;
+        __sync_fetch_and_add(&s->inst_count, __builtin_popcount(_active)); goto *ip++->handler;
     }
 
     /* ============================================================
@@ -586,12 +587,12 @@ int engine_exec(ThOp *code, int tcount, const EngineContext *ctx,
     op_fcvt_s_w: {
         int rd = ip[-1].rd, rs1 = ip[-1].rs1;
         FOR_EACH_LANE { FR(rd, _li) = (float)(int32_t)GPR(rs1, _li); PC(_li) += 4; }
-        s->inst_count += __builtin_popcount(_active); goto *ip++->handler;
+        __sync_fetch_and_add(&s->fp_count, __builtin_popcount(_active)); __sync_fetch_and_add(&s->inst_count, __builtin_popcount(_active)); goto *ip++->handler;
     }
     op_fcvt_s_wu: {
         int rd = ip[-1].rd, rs1 = ip[-1].rs1;
         FOR_EACH_LANE { FR(rd, _li) = (float)GPR(rs1, _li); PC(_li) += 4; }
-        s->inst_count += __builtin_popcount(_active); goto *ip++->handler;
+        __sync_fetch_and_add(&s->fp_count, __builtin_popcount(_active)); __sync_fetch_and_add(&s->inst_count, __builtin_popcount(_active)); goto *ip++->handler;
     }
     op_fcvt_w_s: {
         int rd = ip[-1].rd, rs1 = ip[-1].rs1;
@@ -602,7 +603,7 @@ int engine_exec(ThOp *code, int tcount, const EngineContext *ctx,
                 (f > 2.147e9f ? 0x7FFFFFFF : (f < -2.147e9f ? (int32_t)0x80000000 : (int32_t)f)));
             PC(_li) += 4;
         }
-        s->inst_count += __builtin_popcount(_active); goto *ip++->handler;
+        __sync_fetch_and_add(&s->fp_count, __builtin_popcount(_active)); __sync_fetch_and_add(&s->inst_count, __builtin_popcount(_active)); goto *ip++->handler;
     }
     op_fcvt_wu_s: {
         int rd = ip[-1].rd, rs1 = ip[-1].rs1;
@@ -612,19 +613,19 @@ int engine_exec(ThOp *code, int tcount, const EngineContext *ctx,
                 (f < 0.0f ? 0 : (f > 4.294e9f ? 0xFFFFFFFF : (uint32_t)f));
             PC(_li) += 4;
         }
-        s->inst_count += __builtin_popcount(_active); goto *ip++->handler;
+        __sync_fetch_and_add(&s->fp_count, __builtin_popcount(_active)); __sync_fetch_and_add(&s->inst_count, __builtin_popcount(_active)); goto *ip++->handler;
     }
 
     /* 数据移动 */
     op_fmv_w_x: {
         int rd = ip[-1].rd, rs1 = ip[-1].rs1;
         FOR_EACH_LANE { FPR(rd, _li) = GPR(rs1, _li); PC(_li) += 4; }
-        s->inst_count += __builtin_popcount(_active); goto *ip++->handler;
+        __sync_fetch_and_add(&s->inst_count, __builtin_popcount(_active)); goto *ip++->handler;
     }
     op_fmv_x_w: {
         int rd = ip[-1].rd, rs1 = ip[-1].rs1;
         FOR_EACH_LANE { GPR(rd, _li) = FPR(rs1, _li); PC(_li) += 4; }
-        s->inst_count += __builtin_popcount(_active); goto *ip++->handler;
+        __sync_fetch_and_add(&s->inst_count, __builtin_popcount(_active)); goto *ip++->handler;
     }
 
     /* fclass */
@@ -638,7 +639,7 @@ int engine_exec(ThOp *code, int tcount, const EngineContext *ctx,
             else r = sgn ? (1 << 1) : (1 << 6);
             GPR(rd, _li) = (uint32_t)r; PC(_li) += 4;
         }
-        s->inst_count += __builtin_popcount(_active); goto *ip++->handler;
+        __sync_fetch_and_add(&s->inst_count, __builtin_popcount(_active)); goto *ip++->handler;
     }
 
     /* ============================================================
@@ -648,7 +649,8 @@ int engine_exec(ThOp *code, int tcount, const EngineContext *ctx,
     op_##name: { \
         int rd = ip[-1].rd, rs1 = ip[-1].rs1; \
         FOR_EACH_LANE { float v = FR(rs1, _li); FR(rd, _li) = expr; PC(_li) += 4; } \
-        s->inst_count += __builtin_popcount(_active); goto *ip++->handler; \
+        __sync_fetch_and_add(&s->fp_count, __builtin_popcount(_active)); \
+        __sync_fetch_and_add(&s->inst_count, __builtin_popcount(_active)); goto *ip++->handler; \
     }
     SCI(fexp_s,     expf(v))
     SCI(fln_s,      logf(v))
@@ -677,7 +679,7 @@ int engine_exec(ThOp *code, int tcount, const EngineContext *ctx,
             }
             GPR(rd, _li) = old; PC(_li) += 4;
         }
-        s->inst_count += __builtin_popcount(_active); goto *ip++->handler;
+        __sync_fetch_and_add(&s->inst_count, __builtin_popcount(_active)); goto *ip++->handler;
     }
     op_csrrs: {
         uint16_t csr = (uint16_t)ip[-1].imm;
@@ -692,7 +694,7 @@ int engine_exec(ThOp *code, int tcount, const EngineContext *ctx,
             }
             GPR(rd, _li) = old; PC(_li) += 4;
         }
-        s->inst_count += __builtin_popcount(_active); goto *ip++->handler;
+        __sync_fetch_and_add(&s->inst_count, __builtin_popcount(_active)); goto *ip++->handler;
     }
     op_csrrc: {
         uint16_t csr = (uint16_t)ip[-1].imm;
@@ -707,7 +709,7 @@ int engine_exec(ThOp *code, int tcount, const EngineContext *ctx,
             }
             GPR(rd, _li) = old; PC(_li) += 4;
         }
-        s->inst_count += __builtin_popcount(_active); goto *ip++->handler;
+        __sync_fetch_and_add(&s->inst_count, __builtin_popcount(_active)); goto *ip++->handler;
     }
     op_csrrwi: {
         uint16_t csr = (uint16_t)ip[-1].imm;
@@ -722,7 +724,7 @@ int engine_exec(ThOp *code, int tcount, const EngineContext *ctx,
             }
             GPR(rd, _li) = old; PC(_li) += 4;
         }
-        s->inst_count += __builtin_popcount(_active); goto *ip++->handler;
+        __sync_fetch_and_add(&s->inst_count, __builtin_popcount(_active)); goto *ip++->handler;
     }
     op_csrrsi: {
         uint16_t csr = (uint16_t)ip[-1].imm;
@@ -737,7 +739,7 @@ int engine_exec(ThOp *code, int tcount, const EngineContext *ctx,
             }
             GPR(rd, _li) = old; PC(_li) += 4;
         }
-        s->inst_count += __builtin_popcount(_active); goto *ip++->handler;
+        __sync_fetch_and_add(&s->inst_count, __builtin_popcount(_active)); goto *ip++->handler;
     }
     op_csrrci: {
         uint16_t csr = (uint16_t)ip[-1].imm;
@@ -752,7 +754,7 @@ int engine_exec(ThOp *code, int tcount, const EngineContext *ctx,
             }
             GPR(rd, _li) = old; PC(_li) += 4;
         }
-        s->inst_count += __builtin_popcount(_active); goto *ip++->handler;
+        __sync_fetch_and_add(&s->inst_count, __builtin_popcount(_active)); goto *ip++->handler;
     }
 
     /* ============================================================
@@ -765,7 +767,7 @@ int engine_exec(ThOp *code, int tcount, const EngineContext *ctx,
             uint16_t bf = (uint16_t)(FPR(rs1, _li) >> 16);
             FPR(rd, _li) = bf16_to_f32(bf); PC(_li) += 4;
         }
-        s->inst_count += __builtin_popcount(_active); goto *ip++->handler;
+        __sync_fetch_and_add(&s->inst_count, __builtin_popcount(_active)); goto *ip++->handler;
     }
     op_fcvt_bf16_s: {
         int rd = ip[-1].rd, rs1 = ip[-1].rs1;
@@ -773,7 +775,7 @@ int engine_exec(ThOp *code, int tcount, const EngineContext *ctx,
             uint16_t bf = f32_to_bf16(FPR(rs1, _li));
             FPR(rd, _li) = (FPR(rd, _li) & 0xFFFF) | ((uint32_t)bf << 16); PC(_li) += 4;
         }
-        s->inst_count += __builtin_popcount(_active); goto *ip++->handler;
+        __sync_fetch_and_add(&s->inst_count, __builtin_popcount(_active)); goto *ip++->handler;
     }
     op_fcvt_s_e4m3: {
         int rd = ip[-1].rd, rs1 = ip[-1].rs1;
@@ -781,7 +783,7 @@ int engine_exec(ThOp *code, int tcount, const EngineContext *ctx,
             uint8_t e4 = (uint8_t)(FPR(rs1, _li) >> 24);
             FPR(rd, _li) = e4m3_to_f32(e4); PC(_li) += 4;
         }
-        s->inst_count += __builtin_popcount(_active); goto *ip++->handler;
+        __sync_fetch_and_add(&s->inst_count, __builtin_popcount(_active)); goto *ip++->handler;
     }
     op_fcvt_e4m3_s: {
         int rd = ip[-1].rd, rs1 = ip[-1].rs1;
@@ -789,7 +791,7 @@ int engine_exec(ThOp *code, int tcount, const EngineContext *ctx,
             uint8_t e4 = f32_to_e4m3(FPR(rs1, _li));
             FPR(rd, _li) = (FPR(rd, _li) & 0xFFFFFF) | ((uint32_t)e4 << 24); PC(_li) += 4;
         }
-        s->inst_count += __builtin_popcount(_active); goto *ip++->handler;
+        __sync_fetch_and_add(&s->inst_count, __builtin_popcount(_active)); goto *ip++->handler;
     }
     op_fcvt_s_e5m2: {
         int rd = ip[-1].rd, rs1 = ip[-1].rs1;
@@ -797,7 +799,7 @@ int engine_exec(ThOp *code, int tcount, const EngineContext *ctx,
             uint8_t e5 = (uint8_t)(FPR(rs1, _li) >> 24);
             FPR(rd, _li) = e5m2_to_f32(e5); PC(_li) += 4;
         }
-        s->inst_count += __builtin_popcount(_active); goto *ip++->handler;
+        __sync_fetch_and_add(&s->inst_count, __builtin_popcount(_active)); goto *ip++->handler;
     }
     op_fcvt_e5m2_s: {
         int rd = ip[-1].rd, rs1 = ip[-1].rs1;
@@ -805,7 +807,7 @@ int engine_exec(ThOp *code, int tcount, const EngineContext *ctx,
             uint8_t e5 = f32_to_e5m2(FPR(rs1, _li));
             FPR(rd, _li) = (FPR(rd, _li) & 0xFFFFFF) | ((uint32_t)e5 << 24); PC(_li) += 4;
         }
-        s->inst_count += __builtin_popcount(_active); goto *ip++->handler;
+        __sync_fetch_and_add(&s->inst_count, __builtin_popcount(_active)); goto *ip++->handler;
     }
     op_fcvt_s_e2m1: {
         int rd = ip[-1].rd, rs1 = ip[-1].rs1;
@@ -813,7 +815,7 @@ int engine_exec(ThOp *code, int tcount, const EngineContext *ctx,
             uint8_t e2 = (uint8_t)(FPR(rs1, _li) >> 24);
             FPR(rd, _li) = e2m1_to_f32(e2); PC(_li) += 4;
         }
-        s->inst_count += __builtin_popcount(_active); goto *ip++->handler;
+        __sync_fetch_and_add(&s->inst_count, __builtin_popcount(_active)); goto *ip++->handler;
     }
     op_fcvt_e2m1_s: {
         int rd = ip[-1].rd, rs1 = ip[-1].rs1;
@@ -821,7 +823,7 @@ int engine_exec(ThOp *code, int tcount, const EngineContext *ctx,
             uint8_t e2 = f32_to_e2m1(FPR(rs1, _li));
             FPR(rd, _li) = (FPR(rd, _li) & 0xFFFFFF) | ((uint32_t)e2 << 24); PC(_li) += 4;
         }
-        s->inst_count += __builtin_popcount(_active); goto *ip++->handler;
+        __sync_fetch_and_add(&s->inst_count, __builtin_popcount(_active)); goto *ip++->handler;
     }
 
     /* ============================================================

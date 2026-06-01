@@ -1,40 +1,37 @@
 /*
- * 矩阵乘法 GPU Kernel
+ * 矩阵乘法 GPU Kernel (标准 CUDA grid/block 模式)
  * C = A * B  (M x K) * (K x N) = (M x N)
- * 
- * 参数通过 GPU 核心内部寄存器传递：
- * - grid_dim[0] = M (0x80000030)
- * - grid_dim[1] = K (0x80000034)
- * - block_dim[0] = N (0x80000020)
+ *
+ * 参数: K @ VRAM[0], A[M][K]@0x100000, B[K][N]@0x200000, C[M][N]@0x300000
+ * grid_dim[0] = M, block_dim[0] = N
+ * blockIdx.x = row, threadIdx.x = col
  */
 
 .section .text
 .globl _start
 
 _start:
-    /* 读取 thread_id.x = col */
+    /* 读取 K = VRAM[0] */
+    lw   t5, 0(zero)
+
+    /* threadIdx.x = col */
     lui  t0, 0x80000
     lw   t1, 0(t0)
 
-    /* 读取 block_id.x = row */
+    /* blockIdx.x = row */
     lui  t0, 0x80000
     addi t0, t0, 0x10
     lw   t2, 0(t0)
 
-    /* 读取 M = grid_dim[0] */
+    /* M = grid_dim[0] */
     lui  t0, 0x80000
     addi t0, t0, 0x30
     lw   t3, 0(t0)
 
-    /* 读取 N = block_dim[0] */
+    /* N = block_dim[0] */
     lui  t0, 0x80000
     addi t0, t0, 0x20
     lw   t4, 0(t0)
-
-    /* 读取 K = grid_dim[1] */
-    lui  t0, 0x80000
-    addi t0, t0, 0x34
-    lw   t5, 0(t0)
 
     /* 边界检查 */
     bge  t2, t3, exit
@@ -43,21 +40,20 @@ _start:
     /* sum = 0.0 */
     fcvt.s.w f0, zero
 
-    /* k = 0 — 在循环外面！ */
+    /* k = 0 */
     addi t6, zero, 0
 
 loop:
-    /* if k >= K: goto done */
     bge  t6, t5, done
 
-    /* A地址 */
+    /* A地址 = row*K + k */
     mul  a0, t2, t5
     add  a0, a0, t6
     slli a0, a0, 2
     lui  t0, 0x100
     add  a0, a0, t0
 
-    /* B地址 */
+    /* B地址 = k*N + col */
     mul  a1, t6, t4
     add  a1, a1, t1
     slli a1, a1, 2
@@ -74,7 +70,7 @@ loop:
     j    loop
 
 done:
-    /* C地址 */
+    /* C地址 = row*N + col */
     mul  a0, t2, t4
     add  a0, a0, t1
     slli a0, a0, 2
