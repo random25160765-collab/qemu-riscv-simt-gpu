@@ -101,12 +101,13 @@ static void build_dag(ThOp *code, int n, DFNode *nodes)
 /* ============================================================
  * 从 STORE 反向 DFS, 收集可融合链上的节点索引
  * ============================================================ */
-static int trace_chain(DFNode *nodes, int start, int *chain, int max_len)
+static int trace_chain(DFNode *nodes, int n_nodes, int start, int *chain, int max_len)
 {
     int len = 0;
     int stack[64];
     int sp = 0;
-    bool in_chain[512] = {false};
+    bool *in_chain = calloc(n_nodes, sizeof(bool));
+    if (!in_chain) return 0;
 
     stack[sp++] = start;
     while (sp > 0 && len < max_len) {
@@ -123,6 +124,7 @@ static int trace_chain(DFNode *nodes, int start, int *chain, int max_len)
         if (nodes[cur].rs2 >= 0 && !in_chain[nodes[cur].rs2])
             stack[sp++] = nodes[cur].rs2;
     }
+    free(in_chain);
     return len;
 }
 
@@ -163,6 +165,79 @@ static int match_pattern(DFNode *nodes, ThOp *code, int *chain, int len,
             }
         }
         return 1; /* FUSED_VECMUL */
+    }
+
+    /* Pattern: scal_mul = 1 FLW(scalar) + 1 FLW(vec) + 1 FMUL + 1 FSW */
+    if (n_load == 2 && n_fmul == 1 && n_store == 1) {
+        for (int i = 0; i < len; i++) {
+            int idx = chain[i];
+            uint32_t inst = code[idx].inst;
+            if ((inst & 0x7F) == 0x37) { /* LUI */
+                uint32_t val = inst & 0xFFFFF000;
+                if (val == 0x10000000) params[0] = 0x100000;
+                if (val == 0x20000000) params[1] = 0x200000;
+            }
+        }
+        /* check for scalar at 0x400000 */
+        bool has_scalar = false;
+        for (int i = 0; i < len; i++) {
+            int idx = chain[i];
+            uint32_t inst = code[idx].inst;
+            if ((inst & 0x7F) == 0x37 && (inst & 0xFFFFF000) == 0x40000000)
+                has_scalar = true;
+        }
+        if (has_scalar) return 3; /* FUSED_SCAL_MUL */
+        return 1; /* FUSED_VECMUL (vecmul pattern) */
+    }
+
+    /* Pattern: gelu — uses fexp + fdiv + fmul */
+    {
+        int n_fexp = 0, n_fdiv = 0;
+        for (int i = 0; i < len; i++) {
+            uint32_t inst = code[chain[i]].inst;
+            if ((inst & 0x7F) == 0x53) {
+                uint32_t f7 = (inst >> 25) & 0x7F;
+                if (f7 == 0x30) n_fexp++;     /* fexp.s */
+                if (f7 == 0x0C) n_fdiv++;     /* fdiv.s */
+            }
+        }
+        if (n_fexp >= 1 && n_fdiv >= 1 && n_fmul >= 2 && n_store == 1) {
+            for (int i = 0; i < len; i++) {
+                int idx = chain[i];
+                uint32_t inst = code[idx].inst;
+                if ((inst & 0x7F) == 0x37) {
+                    uint32_t val = inst & 0xFFFFF000;
+                    if (val == 0x10000000) params[0] = 0x100000;
+                    if (val == 0x20000000) params[1] = 0x200000;
+                }
+            }
+            return 4; /* FUSED_GELU */
+        }
+    }
+
+    /* Pattern: softmax inner loop = FLW + FEXP + FADD + FSW */
+    {
+        int n_fexp = 0, n_fadd = 0;
+        for (int i = 0; i < len; i++) {
+            uint32_t inst = code[chain[i]].inst;
+            if ((inst & 0x7F) == 0x53) {
+                uint32_t f7 = (inst >> 25) & 0x7F;
+                if (f7 == 0x30) n_fexp++;
+                if (f7 == 0x00) n_fadd++;    /* fadd.s */
+            }
+        }
+        if (n_fexp >= 1 && n_fadd >= 1 && n_store >= 1 && n_load == 1) {
+            for (int i = 0; i < len; i++) {
+                int idx = chain[i];
+                uint32_t inst = code[idx].inst;
+                if ((inst & 0x7F) == 0x37) {
+                    uint32_t val = inst & 0xFFFFF000;
+                    if (val == 0x10000000) params[0] = 0x100000;
+                    if (val == 0x20000000) params[1] = 0x200000;
+                }
+            }
+            return 5; /* FUSED_SOFTMAX */
+        }
     }
 
     /* Pattern: matmul body = 2 FLW + 1 FMADD */
@@ -206,7 +281,7 @@ ThOp *fusion_pass(ThOp *code_in, int tcount_in, int *tcount_out)
     for (int i = 0; i < tcount_in; i++) {
         if (nodes[i].kind != N_STORE || nodes[i].visited) continue;
 
-        int c_len = trace_chain(nodes, i, chain, 64);
+        int c_len = trace_chain(nodes, tcount_in, i, chain, 64);
         if (c_len < 4) continue; /* 至少 LOAD+LOAD+COMPUTE+STORE */
 
         int32_t params[4] = {0};

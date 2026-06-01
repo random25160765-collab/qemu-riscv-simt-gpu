@@ -19,6 +19,7 @@
 #include "memory.h"
 #include "dispatch.h"    /* INSTRUCTION_LIST (唯一来源) */
 #include "predecode.h"   /* ThOp */
+#include "sfu.h"          /* fast math approx */
 
 /* ============================================================
  * SoA 数据布局宏
@@ -457,12 +458,71 @@ int engine_exec(ThOp *code, int tcount, const EngineContext *ctx,
         uint32_t a_base = (uint32_t)ip[-1].params[0];
         uint32_t b_base = (uint32_t)ip[-1].params[1];
         int skip = ip[-1].skip;
+
+        /* S4: memcpy 热点寄存器到栈上局部数组 + 预取 VRAM */
+        uint32_t row[32]; memcpy(row, &gpr[row_r * 32], 128);
+        uint32_t col[32]; memcpy(col, &gpr[col_r * 32], 128);
+        __builtin_prefetch(s->vram_ptr + a_base + row[0] * 4, 0, 3);
+        __builtin_prefetch(s->vram_ptr + b_base + col[0] * 4, 0, 3);
+
         FOR_EACH_LANE {
-            uint32_t a_off = GPR(row_r, _li) * 4;
-            uint32_t b_off = GPR(col_r, _li) * 4;
-            float a = *(float*)(s->vram_ptr + a_base + a_off);
-            float b = *(float*)(s->vram_ptr + b_base + b_off);
-            FR(acc_r, _li) += a * b;
+            FR(acc_r, _li) +=
+                *(float*)(s->vram_ptr + a_base + row[_li] * 4) *
+                *(float*)(s->vram_ptr + b_base + col[_li] * 4);
+            PC(_li) += ip[-1].pc_advance;
+        }
+        ip += skip; goto *ip++->handler;
+    }
+
+    /* ============================================================
+     * fused_scal_mul — DFG 融合: load scalar+load vec+fmul+store
+     * ============================================================ */
+    op_fused_scal_mul: {
+        int tid_r = ip[-1].rs1;
+        uint32_t v_base = (uint32_t)ip[-1].params[0];
+        uint32_t c_base = (uint32_t)ip[-1].params[1];
+        int skip = ip[-1].skip;
+        /* scalar at VRAM[0x400000] */
+        float alpha = *(float*)(s->vram_ptr + 0x400000);
+        FOR_EACH_LANE {
+            uint32_t off = GPR(tid_r, _li) << 2;
+            float a = *(float*)(s->vram_ptr + v_base + off);
+            *(float*)(s->vram_ptr + c_base + off) = a * alpha;
+            PC(_li) += ip[-1].pc_advance;
+        }
+        ip += skip; goto *ip++->handler;
+    }
+
+    /* ============================================================
+     * fused_gelu — DFG 融合: load+fmul+fexp+fdiv+fmul+store
+     * ============================================================ */
+    op_fused_gelu: {
+        int tid_r = ip[-1].rs1;
+        uint32_t i_base = (uint32_t)ip[-1].params[0];
+        uint32_t o_base = (uint32_t)ip[-1].params[1];
+        int skip = ip[-1].skip;
+        FOR_EACH_LANE {
+            uint32_t off = GPR(tid_r, _li) << 2;
+            float x = *(float*)(s->vram_ptr + i_base + off);
+            *(float*)(s->vram_ptr + o_base + off) = x * fastsigmoid(1.702f * x);
+            PC(_li) += ip[-1].pc_advance;
+        }
+        ip += skip; goto *ip++->handler;
+    }
+
+    /* ============================================================
+     * fused_softmax — DFG 融合: inner loop (flw+fexp+fadd+fsw)
+     * ============================================================ */
+    op_fused_softmax: {
+        int src_r = ip[-1].rs1, sum_r = ip[-1].rd;
+        uint32_t src_base = (uint32_t)ip[-1].params[0];
+        uint32_t tmp_base = (uint32_t)ip[-1].params[1];
+        int skip = ip[-1].skip;
+        FOR_EACH_LANE {
+            uint32_t off = GPR(src_r, _li) << 2;
+            float val = fastexp(*(float*)(s->vram_ptr + src_base + off));
+            *(float*)(s->vram_ptr + tmp_base + off) = val;
+            FR(sum_r, _li) += val;
             PC(_li) += ip[-1].pc_advance;
         }
         ip += skip; goto *ip++->handler;
@@ -681,22 +741,21 @@ int engine_exec(ThOp *code, int tcount, const EngineContext *ctx,
     }
 
     /* ============================================================
-     * 科学计算 — SoA + libm (每次迭代调用数学库)
+     * 科学计算 — sfu.h fast approximations (无 libm 调用)
      * ============================================================ */
     #define SCI(name, expr) \
     op_##name: { \
         int rd = ip[-1].rd, rs1 = ip[-1].rs1; \
         FOR_EACH_LANE { float v = FR(rs1, _li); FR(rd, _li) = expr; PC(_li) += 4; } \
-         \
          goto *ip++->handler; \
     }
-    SCI(fexp_s,     expf(v))
-    SCI(fln_s,      logf(v))
-    SCI(frcp_s,     1.0f / v)
-    SCI(frsqrt_s,   1.0f / sqrtf(v))
-    SCI(ftanh_s,    tanhf(v))
-    SCI(fsigmoid_s, 1.0f / (1.0f + expf(-v)))
-    SCI(fsin_s,     sinf(v))
+    SCI(fexp_s,     fastexp(v))
+    SCI(fln_s,      logf(v))           /* libm: 无快速近似 */
+    SCI(frcp_s,     1.0f / v)          /* HW fdiv */
+    SCI(frsqrt_s,   fastrsqrt(v))
+    SCI(ftanh_s,    fasttanh(v))
+    SCI(fsigmoid_s, fastsigmoid(v))
+    SCI(fsin_s,     sinf(v))           /* libm: ML 极少用 */
     SCI(fcos_s,     cosf(v))
     #undef SCI
 
