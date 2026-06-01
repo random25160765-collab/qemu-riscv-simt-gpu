@@ -17,35 +17,42 @@
 /* ============================================================
  * DAG 节点类型
  * ============================================================ */
-typedef enum {
-    N_OTHER, N_LOAD, N_STORE, N_COMPUTE, N_CONTROL
-} NodeKind;
+typedef enum { N_OTHER, N_LOAD, N_STORE, N_COMPUTE, N_CONTROL } NodeKind;
 
 typedef struct {
-    int16_t  rd;          /* dest register, -1 = none */
-    int16_t  rs1, rs2;   /* source registers */
+    int16_t rd;       /* dest register, -1 = none */
+    int16_t rs1, rs2; /* source registers */
     NodeKind kind;
-    bool     visited;
-    uint32_t inst;        /* raw instruction for pattern matching */
+    bool visited;
+    uint32_t inst; /* raw instruction for pattern matching */
 } DFNode;
 
 /* opcode helpers */
 static NodeKind classify(uint32_t inst)
 {
     uint32_t op = inst & 0x7F;
-    if (op == 0x63) return N_CONTROL;          /* branches */
+    if (op == 0x63) return N_CONTROL;               /* branches */
     if (op == 0x6F || op == 0x67) return N_CONTROL; /* jal/jalr */
-    if (op == 0x73) return N_CONTROL;          /* csr/ebreak */
-    if (op == 0x23) return N_STORE;            /* sb/sh/sw */
-    if (op == 0x27) return N_STORE;            /* fsw */
-    if (op == 0x03) return N_LOAD;             /* lb/lh/lw/lbu/lhu */
-    if (op == 0x07) return N_LOAD;             /* flw */
+    if (op == 0x73) return N_CONTROL;               /* csr/ebreak */
+    if (op == 0x23) return N_STORE;                 /* sb/sh/sw */
+    if (op == 0x27) return N_STORE;                 /* fsw */
+    if (op == 0x03) return N_LOAD;                  /* lb/lh/lw/lbu/lhu */
+    if (op == 0x07) return N_LOAD;                  /* flw */
     return N_COMPUTE;
 }
 
-static int reg_rd(uint32_t inst)  { return (int)((inst >> 7) & 0x1F); }
-static int reg_rs1(uint32_t inst) { return (int)((inst >> 15) & 0x1F); }
-static int reg_rs2(uint32_t inst) { return (int)((inst >> 20) & 0x1F); }
+static int reg_rd(uint32_t inst)
+{
+    return (int)((inst >> 7) & 0x1F);
+}
+static int reg_rs1(uint32_t inst)
+{
+    return (int)((inst >> 15) & 0x1F);
+}
+static int reg_rs2(uint32_t inst)
+{
+    return (int)((inst >> 20) & 0x1F);
+}
 static bool has_rd(uint32_t inst)
 {
     uint32_t op = inst & 0x7F;
@@ -59,8 +66,8 @@ static bool has_rs1(uint32_t inst)
 static bool has_rs2(uint32_t inst)
 {
     uint32_t op = inst & 0x7F;
-    return (op == 0x33 || op == 0x23 || op == 0x27 || op == 0x63 ||
-            op == 0x53 || op == 0x43 || op == 0x47 || op == 0x4B || op == 0x4F);
+    return (op == 0x33 || op == 0x23 || op == 0x27 || op == 0x63 || op == 0x53 || op == 0x43 || op == 0x47 ||
+            op == 0x4B || op == 0x4F);
 }
 
 /* ============================================================
@@ -70,7 +77,8 @@ static void build_dag(ThOp *code, int n, DFNode *nodes)
 {
     /* last_writer[reg]: 最近写入 reg 的节点索引 */
     int16_t last_writer[64]; /* 32 GPR + 32 FPR */
-    for (int i = 0; i < 64; i++) last_writer[i] = -1;
+    for (int i = 0; i < 64; i++)
+        last_writer[i] = -1;
 
     for (int i = 0; i < n; i++) {
         uint32_t inst = code[i].inst;
@@ -80,9 +88,8 @@ static void build_dag(ThOp *code, int n, DFNode *nodes)
 
         if (has_rd(inst)) {
             int rd = reg_rd(inst);
-            bool is_fp = ((inst & 0x7F) == 0x07) || ((inst & 0x7F) == 0x53) ||
-                         ((inst & 0x7F) == 0x43) || ((inst & 0x7F) == 0x47) ||
-                         ((inst & 0x7F) == 0x4B) || ((inst & 0x7F) == 0x4F);
+            bool is_fp = ((inst & 0x7F) == 0x07) || ((inst & 0x7F) == 0x53) || ((inst & 0x7F) == 0x43) ||
+                         ((inst & 0x7F) == 0x47) || ((inst & 0x7F) == 0x4B) || ((inst & 0x7F) == 0x4F);
             int ridx = is_fp ? (32 + rd) : rd;
             nodes[i].rd = (int16_t)ridx;
             last_writer[ridx] = (int16_t)i;
@@ -124,10 +131,8 @@ static int trace_chain(DFNode *nodes, int n_nodes, int start, int *chain, int ma
         in_chain[cur] = true;
         chain[len++] = cur;
 
-        if (nodes[cur].rs1 >= 0 && !in_chain[nodes[cur].rs1])
-            stack[sp++] = nodes[cur].rs1;
-        if (nodes[cur].rs2 >= 0 && !in_chain[nodes[cur].rs2])
-            stack[sp++] = nodes[cur].rs2;
+        if (nodes[cur].rs1 >= 0 && !in_chain[nodes[cur].rs1]) stack[sp++] = nodes[cur].rs1;
+        if (nodes[cur].rs2 >= 0 && !in_chain[nodes[cur].rs2]) stack[sp++] = nodes[cur].rs2;
     }
     free(in_chain);
     return len;
@@ -138,20 +143,19 @@ static int trace_chain(DFNode *nodes, int n_nodes, int start, int *chain, int ma
  *   返回 fused 指令的 INSTRUCTION_LIST ID (0 = 不匹配)
  *   同时填充 params[]
  * ============================================================ */
-static int match_pattern(DFNode *nodes, ThOp *code, int *chain, int len,
-                          int32_t params[4])
+static int match_pattern(DFNode *nodes, ThOp *code, int *chain, int len, int32_t params[4])
 {
     (void)nodes;
     int n_load = 0, n_store = 0, n_fmul = 0, n_fmadd = 0;
     for (int i = 0; i < len; i++) {
         uint32_t inst = code[chain[i]].inst;
         uint32_t op = inst & 0x7F;
-        if (op == 0x07) n_load++;        /* flw */
-        if (op == 0x27) n_store++;       /* fsw */
+        if (op == 0x07) n_load++;  /* flw */
+        if (op == 0x27) n_store++; /* fsw */
         if (op == 0x53) {
             uint32_t f7 = (inst >> 25) & 0x7F;
             uint32_t f3 = (inst >> 12) & 7;
-            if (f7 == 0x10 && (f3 & 3) == 0) n_fmul++;     /* fmul.s */
+            if (f7 == 0x10 && (f3 & 3) == 0) n_fmul++;           /* fmul.s */
             if ((f7 & 0x7C) == 0x10 && (f3 & 3) == 0) n_fmadd++; /* fmadd/fmsub/... */
         }
     }
@@ -188,11 +192,10 @@ static int match_pattern(DFNode *nodes, ThOp *code, int *chain, int len,
         for (int i = 0; i < len; i++) {
             int idx = chain[i];
             uint32_t inst = code[idx].inst;
-            if ((inst & 0x7F) == 0x37 && (inst & 0xFFFFF000) == 0x40000000)
-                has_scalar = true;
+            if ((inst & 0x7F) == 0x37 && (inst & 0xFFFFF000) == 0x40000000) has_scalar = true;
         }
         if (has_scalar) return 3; /* FUSED_SCAL_MUL */
-        return 1; /* FUSED_VECMUL (vecmul pattern) */
+        return 1;                 /* FUSED_VECMUL (vecmul pattern) */
     }
 
     /* Pattern: gelu — uses fexp + fdiv + fmul */
@@ -202,8 +205,8 @@ static int match_pattern(DFNode *nodes, ThOp *code, int *chain, int len,
             uint32_t inst = code[chain[i]].inst;
             if ((inst & 0x7F) == 0x53) {
                 uint32_t f7 = (inst >> 25) & 0x7F;
-                if (f7 == 0x30) n_fexp++;     /* fexp.s */
-                if (f7 == 0x0C) n_fdiv++;     /* fdiv.s */
+                if (f7 == 0x30) n_fexp++; /* fexp.s */
+                if (f7 == 0x0C) n_fdiv++; /* fdiv.s */
             }
         }
         if (n_fexp >= 1 && n_fdiv >= 1 && n_fmul >= 2 && n_store == 1) {
@@ -228,7 +231,7 @@ static int match_pattern(DFNode *nodes, ThOp *code, int *chain, int len,
             if ((inst & 0x7F) == 0x53) {
                 uint32_t f7 = (inst >> 25) & 0x7F;
                 if (f7 == 0x30) n_fexp++;
-                if (f7 == 0x00) n_fadd++;    /* fadd.s */
+                if (f7 == 0x00) n_fadd++; /* fadd.s */
             }
         }
         if (n_fexp >= 1 && n_fadd >= 1 && n_store >= 1 && n_load == 1) {
@@ -277,9 +280,10 @@ ThOp *fusion_pass(ThOp *code_in, int tcount_in, int *tcount_out)
     build_dag(code_in, tcount_in, nodes);
 
     /* 找到可融合链 */
-    int *chain   = calloc(tcount_in, sizeof(int));
-    int *map     = calloc(tcount_in, sizeof(int)); /* old_idx → new_idx (-1 = 融合掉) */
-    for (int i = 0; i < tcount_in; i++) map[i] = i;
+    int *chain = calloc(tcount_in, sizeof(int));
+    int *map = calloc(tcount_in, sizeof(int)); /* old_idx → new_idx (-1 = 融合掉) */
+    for (int i = 0; i < tcount_in; i++)
+        map[i] = i;
 
     int fused_count = 0;
 
@@ -309,8 +313,8 @@ ThOp *fusion_pass(ThOp *code_in, int tcount_in, int *tcount_out)
             if (chain[j] != c_min) map[chain[j]] = -1;
 
         /* 更新 c_min 节点的信息为 fused */
-        code_in[c_min].handler = (void*)(uintptr_t)(80 + fid); /* fused IDs start at 81 */
-        code_in[c_min].skip    = (int16_t)c_len;
+        code_in[c_min].handler = (void *)(uintptr_t)(80 + fid); /* fused IDs start at 81 */
+        code_in[c_min].skip = (int16_t)c_len;
         code_in[c_min].pc_advance = (int16_t)(c_len * 4);
         memcpy(code_in[c_min].params, params, sizeof(params));
         fused_count++;
@@ -319,7 +323,7 @@ ThOp *fusion_pass(ThOp *code_in, int tcount_in, int *tcount_out)
     /* matmul loop: detect backward branch + loop body (flw+flw+fmadd+addi+bne) */
     for (int i = 0; i < tcount_in && i < 120; i++) {
         int bt = code_in[i].branch_tgt;
-        if (bt < 0 || bt >= i) continue; /* not a backward branch */
+        if (bt < 0 || bt >= i) continue;                /* not a backward branch */
         if ((code_in[i].inst & 0x7F) != 0x63) continue; /* not a branch instruction */
 
         /* loop body = [bt, i] */
@@ -328,12 +332,13 @@ ThOp *fusion_pass(ThOp *code_in, int tcount_in, int *tcount_out)
             uint32_t inst = code_in[j].inst;
             if ((inst & 0x7F) == 0x07) n_flw++;
             if ((inst & 0x7F) == 0x43) n_fmadd++;
-            if ((inst & 0x7F) == 0x13 && ((inst>>12)&7) == 0) n_addi++;
+            if ((inst & 0x7F) == 0x13 && ((inst >> 12) & 7) == 0) n_addi++;
         }
         if (n_flw >= 2 && n_fmadd >= 1 && n_addi >= 1) {
             /* found matmul loop: fuse entire loop body into one fused handler */
             int c_min = bt;
-            for (int j = bt + 1; j <= i; j++) map[j] = -1;
+            for (int j = bt + 1; j <= i; j++)
+                map[j] = -1;
             /* mark the branch itself too */
             if (i != c_min) map[i] = -1;
 
@@ -356,7 +361,7 @@ ThOp *fusion_pass(ThOp *code_in, int tcount_in, int *tcount_out)
                 }
             }
 
-            code_in[c_min].handler = (void*)(uintptr_t)86; /* FUSED_MATMUL_LOOP = 86 */
+            code_in[c_min].handler = (void *)(uintptr_t)86; /* FUSED_MATMUL_LOOP = 86 */
             code_in[c_min].skip = (int16_t)(i - bt + 1);
             code_in[c_min].pc_advance = (int16_t)((i - bt + 1) * 4);
             /* params: K, N_cols, a_base, b_base */

@@ -1,5 +1,11 @@
 # VPU Simulator Test Suite
-.PHONY: all clean test kernels help
+.PHONY: all clean test kernels help format format-check
+
+format:
+	@./scripts/format.sh
+
+format-check:
+	@./scripts/format.sh --check
 
 CC       = gcc
 RV_CC    = riscv64-unknown-elf-gcc
@@ -9,7 +15,8 @@ CFLAGS   = -Wall -Wextra -O3 -mavx2 -g -fno-strict-aliasing -I. -Icore -Iproto -
 LDFLAGS  = -lm -lrt -lpthread -llua5.4 -ldl
 RV_CFLAGS = -march=rv32imf -mabi=ilp32 -nostdlib -Ttext=0x0 -Wl,--build-id=none
 
-SRCS  = main.c test_runner.c config.c
+SRCS  = main.c test_runner.c config.c stats.c
+SRCS += tests/func.c tests/bench.c tests/native.c tests/register.c
 SRCS += core/engine.c core/scheduler.c core/fusion.c
 SRCS += core/decode_trie.c core/lpfp.c core/memory.c core/proto.c
 OBJS  = $(SRCS:.c=.o)
@@ -42,4 +49,6 @@ clean:
 help:
 	@echo "make        — build & run all tests"
 	@echo "make test   — same"
-	@echo "make clean  — remove build artifacts"
+	@echo "make clean        — remove build artifacts"
+	@echo "make format       — auto-format all C/H files"
+	@echo "make format-check — check formatting (CI)"

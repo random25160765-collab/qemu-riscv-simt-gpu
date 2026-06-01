@@ -13,7 +13,13 @@
 
 #include <stdint.h>
 #include "state.h"
-#include "predecode.h"   /* ThOp */
+#include "predecode.h" /* ThOp */
+
+/* SIMT stack frame (exposed for WarpSlot persistence) */
+typedef struct {
+    int32_t ft_idx;
+    uint32_t mask;
+} SIMTFrame;
 
 /*
  * ============================================================================
@@ -21,16 +27,16 @@
  * ============================================================================
  */
 typedef struct {
-    GPGPUState *s;            /* VRAM 访问 + kernel 参数 (只读) */
-    uint32_t    active;       /* 活跃掩码：0x1=标量, 0xFFFFFFFF=全 warp */
-    uint8_t    *shm;          /* shared memory buffer (NULL if none) */
-    uint32_t    shm_size;     /* shared memory size */
+    GPGPUState *s;     /* VRAM 访问 + kernel 参数 (只读) */
+    uint32_t active;   /* 活跃掩码：0x1=标量, 0xFFFFFFFF=全 warp */
+    uint8_t *shm;      /* shared memory buffer (NULL if none) */
+    uint32_t shm_size; /* shared memory size */
 
     /* per-warp SIMT 上下文 (线程安全: 每个 warp 一份, 不共享) */
-    uint32_t    thread_id[3]; /* 当前线程 ID (base + lane offset) */
-    uint32_t    block_id[3];  /* 所属 block ID */
-    uint32_t    warp_id;      /* warp 编号 */
-    uint32_t    thread_mask;  /* 活跃线程掩码 */
+    uint32_t thread_id[3]; /* 当前线程 ID (base + lane offset) */
+    uint32_t block_id[3];  /* 所属 block ID */
+    uint32_t warp_id;      /* warp 编号 */
+    uint32_t thread_mask;  /* 活跃线程掩码 */
 } EngineContext;
 
 /*
@@ -52,9 +58,8 @@ typedef struct {
  *   0  = 成功 (ebreak/done)
  *   -1 = 非法指令
  */
-int engine_exec(ThOp *code, int tcount, const EngineContext *ctx,
-                uint32_t gpr[32 * 32], uint32_t fpr[32 * 32], uint32_t pc[32],
-                uint32_t mhartid[32], uint32_t fcsr[32]);
+int engine_exec(ThOp *code, int tcount, const EngineContext *ctx, uint32_t gpr[32 * 32], uint32_t fpr[32 * 32],
+                uint32_t pc[32], uint32_t mhartid[32], uint32_t fcsr[32], SIMTFrame *_stk, int *_sdepth, int resume_pc);
 
 /*
  * ============================================================================

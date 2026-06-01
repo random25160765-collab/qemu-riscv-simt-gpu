@@ -33,12 +33,14 @@ void vpu_event_write(uint32_t event_code, ...);
 /* ============================================================
  * 宏定义
  * ============================================================ */
-#define GPGPU_INST_BIN(inst_code, ...) \
-    do { if (TRACE_LEVEL >= 2) gpgpu_inst_trace_bin(inst_code, ##__VA_ARGS__); } while(0)
+#define GPGPU_INST_BIN(inst_code, ...)                                        \
+    do {                                                                      \
+        if (TRACE_LEVEL >= 2) gpgpu_inst_trace_bin(inst_code, ##__VA_ARGS__); \
+    } while (0)
 
-#define GPGPU_EVENT(ring, event_code, ...) \
-    do { \
+#define GPGPU_EVENT(ring, event_code, ...)                                \
+    do {                                                                  \
         if (TRACE_LEVEL >= 1) vpu_event_write(event_code, ##__VA_ARGS__); \
-    } while(0)
+    } while (0)
 
 #endif /* GPGPU_PROTO_H */

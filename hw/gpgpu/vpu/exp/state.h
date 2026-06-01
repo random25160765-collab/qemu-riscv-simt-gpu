@@ -21,10 +21,10 @@
  * 错误状态位掩码 (error_status 寄存器)
  * ============================================================================
  */
-#define GPGPU_ERR_INVALID_CMD       (1 << 0)
-#define GPGPU_ERR_VRAM_FAULT        (1 << 1)
-#define GPGPU_ERR_KERNEL_FAULT      (1 << 2)
-#define GPGPU_ERR_DMA_FAULT         (1 << 3)
+#define GPGPU_ERR_INVALID_CMD (1 << 0)
+#define GPGPU_ERR_VRAM_FAULT (1 << 1)
+#define GPGPU_ERR_KERNEL_FAULT (1 << 2)
+#define GPGPU_ERR_DMA_FAULT (1 << 3)
 
 /*
  * ============================================================================
@@ -81,7 +81,6 @@ typedef struct GPGPUState {
     uint32_t warp_size;
     uint64_t vram_size;
 
-
     /* VRAM (本地堆分配) */
     uint8_t *vram_ptr;
 
@@ -100,7 +99,7 @@ typedef struct GPGPUState {
 
     /* 内核分发参数 */
     GPGPUKernelParams kernel;
-    uint32_t kern_size;          /* 实际 kernel 大小 (bytes) */
+    uint32_t kern_size; /* 实际 kernel 大小 (bytes) */
 
     /* DMA 引擎状态 */
     GPGPUDMAState dma;
@@ -108,10 +107,17 @@ typedef struct GPGPUState {
     /* SIMT 执行上下文 */
     GPGPUSIMTContext simt;
 
-    /* 性能计数器 (独立测试专用) */
-    uint64_t inst_count;       /* 总 lane-指令数 */
-    uint64_t fp_count;         /* FP 操作数 */
-    uint64_t cycle_count;      /* 总执行周期数 */
+    /* 性能统计 (per-kernel-launch, scheduler 清零) */
+    struct {
+        uint64_t total_warps;    /* 总 warp 数 (scheduler) */
+        uint64_t kernel_ops;     /* 预译码指令条数 (scheduler) */
+        uint64_t cat[8];         /* 指令分类: 动态 (engine NEXT, perf=1) */
+        uint64_t cat_static[8];  /* 指令分类: 静态 (scheduler 离线) */
+        uint64_t total_branches; /* 总分支数 (engine DIV_BR) */
+        uint64_t simt_diverges;  /* 分歧分支数 (engine DIV_BR) */
+        uint64_t bytes_read;     /* VRAM 读 (engine load handlers) */
+        uint64_t bytes_write;    /* VRAM 写 (engine store handlers) */
+    } stats;
 } GPGPUState;
 
 #endif /* GPGPU_STATE_H */

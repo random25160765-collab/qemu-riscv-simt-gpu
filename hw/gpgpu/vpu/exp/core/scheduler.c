@@ -31,8 +31,7 @@
 /* ============================================================
  * 预译码
  * ============================================================ */
-static ThOp *scheduler_predecode(GPGPUState *s, uint32_t kern_addr,
-                                  uint32_t kern_size, int *out_count)
+static ThOp *scheduler_predecode(GPGPUState *s, uint32_t kern_addr, uint32_t kern_size, int *out_count)
 {
     SIMDDecoder dec = {0};
     simd_decoder_init(&dec);
@@ -45,10 +44,8 @@ static ThOp *scheduler_predecode(GPGPUState *s, uint32_t kern_addr,
 /* ============================================================
  * Warp 初始化
  * ============================================================ */
-static void scheduler_init_warp(GPGPUWarp *warp, uint32_t pc,
-                                 uint32_t thread_id_base, const uint32_t block_id[3],
-                                 uint32_t num_threads, uint32_t warp_id,
-                                 uint32_t block_id_linear)
+static void scheduler_init_warp(GPGPUWarp *warp, uint32_t pc, uint32_t thread_id_base, const uint32_t block_id[3],
+                                uint32_t num_threads, uint32_t warp_id, uint32_t block_id_linear)
 {
     memset(warp, 0, sizeof(*warp));
     warp->thread_id_base = thread_id_base;
@@ -75,58 +72,64 @@ static void scheduler_init_warp(GPGPUWarp *warp, uint32_t pc,
  * ============================================================ */
 typedef struct {
     GPGPUState *s;
-    ThOp       *code;
-    int         tcount;
-    uint32_t    kern_addr;
-    uint32_t    tpb;            /* threads per block */
-    uint32_t    block_id[3];
-    uint32_t    blk_linear;
-    uint32_t    num_warps;
+    ThOp *code;
+    int tcount;
+    uint32_t kern_addr;
+    uint32_t tpb; /* threads per block */
+    uint32_t block_id[3];
+    uint32_t blk_linear;
+    uint32_t num_warps;
 
     /* shared memory */
-    uint8_t    *shm;
-    uint32_t    shm_size;
+    uint8_t *shm;
+    uint32_t shm_size;
 
     /* barrier */
-    uint32_t    barrier_target;
-    uint32_t    barrier_count;
-    bool        barrier_active;
+    uint32_t barrier_target;
+    uint32_t barrier_count;
+    bool barrier_active;
 
     /* result */
-    int         ret;
+    int ret;
 } BlockContext;
 
 /* ============================================================
  * 执行单个 warp (无 s->simt 访问, 线程安全)
  * ============================================================ */
-static int exec_warp(GPGPUState *s, GPGPUWarp *warp, ThOp *code, int tcount,
-                      BlockContext *blk)
+static int exec_warp(GPGPUState *s, GPGPUWarp *warp, ThOp *code, int tcount, BlockContext *blk)
 {
     uint32_t gpr[32 * 32], fpr[32 * 32], pc[32], mhartid[32], fcsr[32];
     aos_to_soa(warp, gpr, fpr, pc, mhartid, fcsr);
 
-    s->shm_ptr   = blk->shm;
-    s->shm_size  = blk->shm_size;
+    s->shm_ptr = blk->shm;
+    s->shm_size = blk->shm_size;
     EngineContext ctx = {
-        .s = s, .active = warp->active_mask,
-        .shm = blk->shm, .shm_size = blk->shm_size,
-        .thread_id = { warp->thread_id_base, 0, 0 },
-        .block_id  = { warp->block_id[0], warp->block_id[1], warp->block_id[2] },
-        .warp_id   = warp->warp_id,
-        .thread_mask = warp->active_mask,
+            .s = s,
+            .active = warp->active_mask,
+            .shm = blk->shm,
+            .shm_size = blk->shm_size,
+            .thread_id = {warp->thread_id_base, 0, 0},
+            .block_id = {warp->block_id[0], warp->block_id[1], warp->block_id[2]},
+            .warp_id = warp->warp_id,
+            .thread_mask = warp->active_mask,
     };
 
-    int ret = engine_exec(code, tcount, &ctx, gpr, fpr, pc, mhartid, fcsr);
+#define SIMT_STACK_MAX 32
+    SIMTFrame _stk[SIMT_STACK_MAX];
+    int _sdepth = 0;
+    int ret = engine_exec(code, tcount, &ctx, gpr, fpr, pc, mhartid, fcsr, _stk, &_sdepth, -1);
 
-    if (ret == 1) {
-        /* barrier reached */
+    if (ret & 0x10000) {
+        /* barrier reached: 保存状态, 计数, 全部到达后恢复 */
+        int rpc = ret & 0xFFFF;
         blk->barrier_count++;
         if (blk->barrier_count >= blk->barrier_target) {
-            blk->barrier_count  = 0;
+            blk->barrier_count = 0;
             blk->barrier_active = false;
+            /* FIXME: WarpSlot persistence for true multi-warp resume */
         }
-        /* FIXME: warp pause/resume needs WarpSlot persistence */
-        ret = 0;
+        /* for now: continue from barrier (sequential warps, implicit sync) */
+        ret = engine_exec(code, tcount, &ctx, gpr, fpr, pc, mhartid, fcsr, _stk, &_sdepth, rpc);
     }
 
     soa_to_aos(warp, gpr, fpr, pc, mhartid, fcsr);
@@ -141,7 +144,7 @@ static void *exec_block(void *arg);
 typedef struct {
     volatile int *idx;
     BlockContext *blocks;
-    int           total;
+    int total;
 } WorkQueue;
 
 static void *pool_worker(void *arg)
@@ -169,11 +172,13 @@ static void *exec_block(void *arg)
         uint32_t n_threads = blk->tpb - tid_base;
         if (n_threads > GPGPU_WARP_SIZE) n_threads = GPGPU_WARP_SIZE;
 
-        scheduler_init_warp(&warp, blk->kern_addr, tid_base,
-                            blk->block_id, n_threads, w, blk->blk_linear);
+        scheduler_init_warp(&warp, blk->kern_addr, tid_base, blk->block_id, n_threads, w, blk->blk_linear);
 
         int ret = exec_warp(s, &warp, blk->code, blk->tcount, blk);
-        if (ret != 0) { blk->ret = -1; return NULL; }
+        if (ret != 0) {
+            blk->ret = -1;
+            return NULL;
+        }
     }
 
     blk->ret = 0;
@@ -185,8 +190,10 @@ static void *exec_block(void *arg)
  * ============================================================ */
 int scheduler_run_kernel(GPGPUState *s)
 {
-    uint32_t gd[3] = { s->kernel.grid_dim[0], s->kernel.grid_dim[1], s->kernel.grid_dim[2] };
-    uint32_t bd[3] = { s->kernel.block_dim[0], s->kernel.block_dim[1], s->kernel.block_dim[2] };
+    memset(&s->stats, 0, sizeof(s->stats));
+
+    uint32_t gd[3] = {s->kernel.grid_dim[0], s->kernel.grid_dim[1], s->kernel.grid_dim[2]};
+    uint32_t bd[3] = {s->kernel.block_dim[0], s->kernel.block_dim[1], s->kernel.block_dim[2]};
     uint32_t kern_addr = s->kernel.kernel_addr;
     uint32_t tpb = bd[0] * bd[1] * bd[2];
 
@@ -199,31 +206,72 @@ int scheduler_run_kernel(GPGPUState *s)
     if (s->cfg.features.fusion) {
         int fused_count = 0;
         ThOp *fused = fusion_pass(code, tcount, &fused_count);
-        if (fused) { free(code); code = fused; tcount = fused_count; }
+        if (fused) {
+            free(code);
+            code = fused;
+            tcount = fused_count;
+        }
     }
+
+    /* 分类: 总是设置 code[i].cat (NEXT() 热路径读取) */
+    for (int i = 0; i < tcount; i++) {
+        uint32_t inst = code[i].inst;
+        int c = CAT_ALU;
+        if (inst == 0)
+            c = CAT_SYS;
+        else
+            switch (inst & 0x7F) {
+            case 0x03:
+            case 0x07: c = CAT_MEM; break;
+            case 0x23:
+            case 0x27: c = CAT_MEM; break;
+            case 0x63:
+            case 0x67:
+            case 0x6F: c = CAT_BR; break;
+            case 0x43:
+            case 0x47:
+            case 0x4B:
+            case 0x4F:
+            case 0x53: c = CAT_FP; break;
+            case 0x73: c = CAT_SYS; break;
+            }
+        code[i].cat = (uint8_t)c;
+    }
+
+    /* mix 统计: cat_static 离线, cat 动态 (NEXT(), perf=1 时生效) */
+    memset(s->stats.cat, 0, sizeof(s->stats.cat));
+    memset(s->stats.cat_static, 0, sizeof(s->stats.cat_static));
+    for (int i = 0; i < tcount; i++)
+        s->stats.cat_static[code[i].cat]++;
+    s->stats.kernel_ops = (uint64_t)tcount;
 
     /* 收集所有 block */
     uint32_t total_blocks = gd[0] * gd[1] * gd[2];
     BlockContext *blocks = calloc(total_blocks, sizeof(BlockContext));
-    if (!blocks) { free(code); return -1; }
+    if (!blocks) {
+        free(code);
+        return -1;
+    }
     int num_blocks = 0;
 
     for (uint32_t z = 0; z < gd[2]; z++) {
         for (uint32_t y = 0; y < gd[1]; y++) {
             for (uint32_t x = 0; x < gd[0]; x++) {
                 BlockContext *blk = &blocks[num_blocks++];
-                blk->s         = s;
-                blk->code      = code;
-                blk->tcount    = tcount;
+                blk->s = s;
+                blk->code = code;
+                blk->tcount = tcount;
                 blk->kern_addr = kern_addr;
-                blk->tpb       = tpb;
-                blk->block_id[0] = x; blk->block_id[1] = y; blk->block_id[2] = z;
-                blk->blk_linear  = z * gd[0] * gd[1] + y * gd[0] + x;
-                blk->num_warps   = (tpb + GPGPU_WARP_SIZE - 1) / GPGPU_WARP_SIZE;
+                blk->tpb = tpb;
+                blk->block_id[0] = x;
+                blk->block_id[1] = y;
+                blk->block_id[2] = z;
+                blk->blk_linear = z * gd[0] * gd[1] + y * gd[0] + x;
+                blk->num_warps = (tpb + GPGPU_WARP_SIZE - 1) / GPGPU_WARP_SIZE;
+                s->stats.total_warps += blk->num_warps;
                 blk->barrier_target = blk->num_warps;
                 blk->shm_size = s->kernel.shared_mem_size;
-                if (blk->shm_size > 0)
-                    blk->shm = calloc(1, blk->shm_size);
+                if (blk->shm_size > 0) blk->shm = calloc(1, blk->shm_size);
             }
         }
     }
@@ -237,7 +285,7 @@ int scheduler_run_kernel(GPGPUState *s)
 
         /* 用 exec_block 配合原子索引实现 work-stealing */
         int work_idx = 0;
-        WorkQueue wq = { .idx = &work_idx, .blocks = blocks, .total = num_blocks };
+        WorkQueue wq = {.idx = &work_idx, .blocks = blocks, .total = num_blocks};
 
         pthread_t *threads = calloc(n_workers, sizeof(pthread_t));
         for (int i = 0; i < n_workers; i++)

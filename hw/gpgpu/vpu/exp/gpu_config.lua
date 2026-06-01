@@ -12,6 +12,6 @@ return {
         lp     = true,   -- low-precision float (bf16/e4m3/e5m2/e2m1)
         debug  = false,  -- event output via ring buffer
         trace  = false,  -- instruction-level trace
-        perf   = true,   -- show MFLOPS/GFLOPS in benchmarks
+        perf   = false,   -- hot-path stats: bandwidth, branches, divergence
     },
 }

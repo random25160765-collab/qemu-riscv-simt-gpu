@@ -19,7 +19,8 @@
 #define MATCH_EBREAK 0x00100073
 
 /* Instruction Parsing Macros and tools */
-static inline uint32_t pattern_to_mask(const char *pattern) {
+static inline uint32_t pattern_to_mask(const char *pattern)
+{
     uint32_t mask = 0;
     const char *p = pattern;
     int bit = 31;
@@ -38,7 +39,8 @@ static inline uint32_t pattern_to_mask(const char *pattern) {
     return mask;
 }
 
-static inline uint32_t pattern_to_match(const char *pattern) {
+static inline uint32_t pattern_to_match(const char *pattern)
+{
     uint32_t match = 0;
     const char *p = pattern;
     int bit = 31;
@@ -58,11 +60,13 @@ static inline uint32_t pattern_to_match(const char *pattern) {
 }
 
 /* ======== IMM ======== */
-#define immI(i)   (SEXT(BITS(i, 31, 20), 12))
-#define immU(i)   ((SEXT(BITS(i, 31, 12), 20) << 12))
-#define immS(i)   ((SEXT(BITS(i, 31, 25), 7) << 5) | BITS(i, 11, 7))
-#define immB(i)   ((SEXT(BITS(i, 31, 31), 1) << 12) | (BITS(i, 7, 7) << 11) | (BITS(i, 30, 25) << 5) | (BITS(i, 11, 8) << 1))
-#define immJ(i)   ((SEXT(BITS(i, 31, 31), 1) << 20) | (BITS(i, 19, 12) << 12) | (BITS(i, 20, 20) << 11) | (BITS(i, 30, 21) << 1))
+#define immI(i) (SEXT(BITS(i, 31, 20), 12))
+#define immU(i) ((SEXT(BITS(i, 31, 12), 20) << 12))
+#define immS(i) ((SEXT(BITS(i, 31, 25), 7) << 5) | BITS(i, 11, 7))
+#define immB(i) \
+    ((SEXT(BITS(i, 31, 31), 1) << 12) | (BITS(i, 7, 7) << 11) | (BITS(i, 30, 25) << 5) | (BITS(i, 11, 8) << 1))
+#define immJ(i) \
+    ((SEXT(BITS(i, 31, 31), 1) << 20) | (BITS(i, 19, 12) << 12) | (BITS(i, 20, 20) << 11) | (BITS(i, 30, 21) << 1))
 #define immCSR(i) (BITS(inst, 31, 20))
 
 #endif /* INST_H */
