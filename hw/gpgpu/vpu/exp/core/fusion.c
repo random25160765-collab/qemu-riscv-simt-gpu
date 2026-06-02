@@ -112,13 +112,11 @@ static void build_dag(ThOp *code, int n, DFNode *nodes)
         nodes[i].rs2 = -1;
         if (has_rs1(inst)) {
             int r = reg_rs1(inst);
-            int ridx = is_fp_rs1(inst) ? (32 + r) : r;
-            nodes[i].rs1 = last_writer[ridx];
+            nodes[i].rs1 = last_writer[r];
         }
         if (has_rs2(inst)) {
             int r = reg_rs2(inst);
-            int ridx = is_fp_rs2(inst) ? (32 + r) : r;
-            nodes[i].rs2 = last_writer[ridx];
+            nodes[i].rs2 = last_writer[r];
         }
     }
 }
@@ -129,7 +127,8 @@ static void build_dag(ThOp *code, int n, DFNode *nodes)
 static int trace_chain(DFNode *nodes, int n_nodes, int start, int *chain, int max_len)
 {
     int len = 0;
-    int stack[64];
+    #define DFS_STACK_MAX 128
+    int stack[DFS_STACK_MAX];
     int sp = 0;
     bool *in_chain = calloc(n_nodes, sizeof(bool));
     if (!in_chain) return 0;
@@ -140,12 +139,17 @@ static int trace_chain(DFNode *nodes, int n_nodes, int start, int *chain, int ma
         if (cur < 0 || nodes[cur].visited || in_chain[cur]) continue;
         if (nodes[cur].kind == N_CONTROL) continue;
 
-        /* stop at leaf: no sources OR source is non-compute */
         in_chain[cur] = true;
         chain[len++] = cur;
 
-        if (nodes[cur].rs1 >= 0 && !in_chain[nodes[cur].rs1]) stack[sp++] = nodes[cur].rs1;
-        if (nodes[cur].rs2 >= 0 && !in_chain[nodes[cur].rs2]) stack[sp++] = nodes[cur].rs2;
+        if (nodes[cur].rs1 >= 0 && !in_chain[nodes[cur].rs1]) {
+            if (sp >= DFS_STACK_MAX) break;
+            stack[sp++] = nodes[cur].rs1;
+        }
+        if (nodes[cur].rs2 >= 0 && !in_chain[nodes[cur].rs2]) {
+            if (sp >= DFS_STACK_MAX) break;
+            stack[sp++] = nodes[cur].rs2;
+        }
     }
     free(in_chain);
     return len;
@@ -329,17 +333,11 @@ ThOp *fusion_pass(ThOp *code_in, int tcount_in, int *tcount_out)
         fused_count++;
     }
 
-    /* matmul loop: detect backward branch + loop body (flw+flw+fmadd+addi+j/bne) */
+    /* matmul loop: detect backward branch + loop body (flw+flw+fmadd+addi+bne) */
     for (int i = 0; i < tcount_in && i < 120; i++) {
         int bt = code_in[i].branch_tgt;
-        if (bt < 0 || bt >= i) continue; /* not a backward branch */
-        uint32_t op_i = code_in[i].inst & 0x7F;
-        /* accept B-type branches (0x63) AND JAL (0x6F, for "j loop") */
-        if (op_i == 0x6F) {
-            if (((code_in[i].inst >> 7) & 0x1F) != 0) continue; /* only "j" (jal x0) */
-        } else if (op_i != 0x63) {
-            continue;
-        }
+        if (bt < 0 || bt >= i) continue;                /* not a backward branch */
+        if ((code_in[i].inst & 0x7F) != 0x63) continue; /* not a branch instruction */
 
         /* loop body = [bt, i] */
         int n_flw = 0, n_fmadd = 0, n_addi = 0;
@@ -355,29 +353,15 @@ ThOp *fusion_pass(ThOp *code_in, int tcount_in, int *tcount_out)
                 map[j] = -1;
             if (i != c_min) map[i] = -1;
 
-            /* Scan loop body for LUI to extract a_base / b_base */
-            uint32_t a_base = 0, b_base = 0;
-            for (int j = bt; j <= i && j < tcount_in; j++) {
-                uint32_t inst = code_in[j].inst;
-                if ((inst & 0x7F) == 0x37) {
-                    uint32_t v = inst & 0xFFFFF000;
-                    if (v == 0x10000000) a_base = 0x100000;
-                    if (v == 0x20000000) b_base = 0x200000;
-                }
-            }
-            /* fallback: use known offsets */
-            if (!a_base) a_base = 0x100000;
-            if (!b_base) b_base = 0x200000;
-
-            code_in[c_min].handler = (void *)(uintptr_t)113;
+            code_in[c_min].handler = (void *)(uintptr_t)113; /* FUSED_MATMUL_LOOP */
             code_in[c_min].skip = (int16_t)(i - bt + 1);
             code_in[c_min].pc_advance = (int16_t)((i - bt + 1) * 4);
-            code_in[c_min].params[0] = (int32_t)a_base;
-            code_in[c_min].params[1] = (int32_t)b_base;
-            code_in[c_min].params[2] = 0; /* unused */
-            code_in[c_min].params[3] = 0; /* unused */
-            code_in[c_min].rs1 = 0; /* unused: handler uses ctx */
-            code_in[c_min].rs2 = 0;
+            code_in[c_min].params[0] = 128; /* K */
+            code_in[c_min].params[1] = 128; /* N */
+            code_in[c_min].params[2] = 0x100000;
+            code_in[c_min].params[3] = 0x200000;
+            code_in[c_min].rs1 = code_in[bt].rs1; /* row */
+            code_in[c_min].rs2 = code_in[bt].rs2; /* col */
             fused_count++;
             break; /* only handle first loop */
         }
