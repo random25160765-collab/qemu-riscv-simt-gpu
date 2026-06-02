@@ -158,12 +158,12 @@ static void s_mm(GPGPUState *s)
     *(uint32_t *)s->vram_ptr = 2;
     ((float *)(s->vram_ptr + 0x100000))[0] = 1;
     ((float *)(s->vram_ptr + 0x100000))[1] = 2;
-    ((float *)(s->vram_ptr + 0x200000))[0] = 3;
-    ((float *)(s->vram_ptr + 0x200000))[1] = 4;
+    ((float *)(s->vram_ptr + 0x600000))[0] = 3;
+    ((float *)(s->vram_ptr + 0x600000))[1] = 4;
 }
 static int c_mm(GPGPUState *s)
 {
-    return fabsf(((float *)(s->vram_ptr + 0x300000))[0] - 11) > 1e-3f;
+    return fabsf(((float *)(s->vram_ptr + 0xB00000))[0] - 11) > 1e-3f;
 }
 
 /* --- dot product --- */
@@ -284,11 +284,11 @@ static void s_mma_f(GPGPUState *s)
     for (int i = 0; i < 4; i++)
         ((float *)(s->vram_ptr + 0x100000))[i] = 1.0f;
     for (int i = 0; i < 4 * 32; i++)
-        ((float *)(s->vram_ptr + 0x200000))[i] = 1.0f;
+        ((float *)(s->vram_ptr + 0x600000))[i] = 1.0f;
 }
 static int c_mma_f(GPGPUState *s)
 {
-    float *C = (float *)(s->vram_ptr + 0x300000);
+    float *C = (float *)(s->vram_ptr + 0xB00000);
     for (int i = 0; i < 32; i++)
         if (fabsf(C[i] - 4.0f) > 1e-4f) return 1;
     return 0;

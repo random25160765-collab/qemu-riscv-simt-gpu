@@ -16,6 +16,7 @@ typedef struct {
     int (*check)(GPGPUState *s);
     uint64_t flops, params[3];
     bool bench, native;
+    int (*cmp)(GPGPUState *s);   /* host-native dual-execution compare */
 } TestCase;
 
 void test_register(TestCase t);

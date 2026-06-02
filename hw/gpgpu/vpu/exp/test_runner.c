@@ -70,7 +70,7 @@ static uint64_t g_bp[3]; /* bench params pass-through */
 /* --- run one test --- */
 static int run_one(GPGPUState *s, TestCase *t)
 {
-    memset(s->vram_ptr, 0, 5 * 1024 * 1024);
+    memset(s->vram_ptr, 0, 16 * 1024 * 1024);
     memcpy(g_bp, t->params, sizeof(g_bp));
     if (t->setup) t->setup(s);
     s->kernel.kernel_addr = KERN_ADDR;
@@ -89,6 +89,7 @@ static int run_one(GPGPUState *s, TestCase *t)
     if (ret) return 1;
     double us = (T1.tv_sec - T0.tv_sec) * 1e6 + (T1.tv_nsec - T0.tv_nsec) * 1e-3;
     int err = t->check ? t->check(s) : 0;
+    if (t->cmp) err |= t->cmp(s);
     stats_snapshot(s, t->name, us, t->flops, t->bench, !err);
     return err ? 1 : 0;
 }

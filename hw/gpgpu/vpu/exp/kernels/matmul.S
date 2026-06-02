@@ -40,7 +40,7 @@ _start:
     slli a6, t4, 2              # a6 = N * 4
 
     slli a2, t1, 2
-    lui  a4, 0x200
+    lui  a4, 0x600
     add  a2, a2, a4             # a2 = B[k][col_start]
 
     andi t6, t5, -4             # K rounded down to 4
@@ -87,7 +87,7 @@ done:
     mul  a2, t2, t4
     add  a2, a2, t1
     slli a2, a2, 2
-    lui  t0, 0x300
+    lui  t0, 0xB00
     add  a2, a2, t0             # a2 = C[row][col_start]
     addi a5, zero, 4
     mma.st acc0, (a2), a5

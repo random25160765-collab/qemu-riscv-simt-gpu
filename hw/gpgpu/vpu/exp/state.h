@@ -109,12 +109,12 @@ typedef struct GPGPUState {
 
     /* TCU MMA 状态 */
     struct {
-        uint32_t M, K, N;  /* 矩阵维度 */
-        uint32_t a_base;   /* A 矩阵 VRAM 基址 */
-        uint32_t b_base;   /* B 矩阵 VRAM 基址 */
-        uint32_t c_base;   /* C 矩阵 VRAM 基址 */
-        uint32_t fmt_in;   /* 输入精度: 0=fp32,1=fp16,2=bf16,3=int8 */
-        uint32_t fmt_out;  /* 输出精度 */
+        uint32_t M, K, N; /* 矩阵维度 */
+        uint32_t a_base;  /* A 矩阵 VRAM 基址 */
+        uint32_t b_base;  /* B 矩阵 VRAM 基址 */
+        uint32_t c_base;  /* C 矩阵 VRAM 基址 */
+        uint32_t fmt_in;  /* 输入精度: 0=fp32,1=fp16,2=bf16,3=int8 */
+        uint32_t fmt_out; /* 输出精度 */
     } mma;
 
     /* 性能统计 (per-kernel-launch, scheduler 清零) */

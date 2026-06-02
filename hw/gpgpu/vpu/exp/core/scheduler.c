@@ -251,12 +251,10 @@ int scheduler_run_kernel(GPGPUState *s)
             why = "TCU disabled but kernel uses tensor instructions";
         else if (op == 0x53 && !s->cfg.features.lp) {
             uint32_t f7 = (code[i].inst >> 25) & 0x7F;
-            if (f7 == 0x22 || f7 == 0x24 || f7 == 0x26)
-                why = "LP-float disabled but kernel uses bf16/e4m3/e5m2/e2m1";
+            if (f7 == 0x22 || f7 == 0x24 || f7 == 0x26) why = "LP-float disabled but kernel uses bf16/e4m3/e5m2/e2m1";
         } else if (op == 0x53 && !s->cfg.features.sfu) {
             uint32_t f7 = (code[i].inst >> 25) & 0x7F;
-            if (f7 == 0x30)
-                why = "SFU disabled but kernel uses fexp/fln/frcp/fsin/fcos";
+            if (f7 == 0x30) why = "SFU disabled but kernel uses fexp/fln/frcp/fsin/fcos";
         }
         if (why) {
             fprintf(stderr, "ERROR: %s (inst 0x%08x at offset %d)\n", why, code[i].inst, i);

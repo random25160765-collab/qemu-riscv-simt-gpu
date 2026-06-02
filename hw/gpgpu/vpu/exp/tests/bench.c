@@ -3,6 +3,7 @@
  */
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <math.h>
 #include "../state.h"
@@ -28,7 +29,7 @@ static void s_matmul(GPGPUState *s)
     for (uint32_t i = 0; i < M * K; i++)
         ((float *)(s->vram_ptr + 0x100000))[i] = 1.0f;
     for (uint32_t i = 0; i < K * N; i++)
-        ((float *)(s->vram_ptr + 0x200000))[i] = 1.0f;
+        ((float *)(s->vram_ptr + 0x600000))[i] = 1.0f;
 }
 static void s_scal(GPGPUState *s)
 {
@@ -62,7 +63,7 @@ static int c_matmul(GPGPUState *s)
 {
     uint64_t *bp = test_bp();
     uint32_t M = (uint32_t)bp[0], K = (uint32_t)bp[1], N = (uint32_t)bp[2];
-    float *C = (float *)(s->vram_ptr + 0x300000);
+    float *C = (float *)(s->vram_ptr + 0xB00000);
     int errs = 0;
     for (uint32_t row = 0; row < M && errs < 5; row++) {
         for (uint32_t col = 0; col < N && errs < 5; col++) {
@@ -77,11 +78,47 @@ static int c_matmul(GPGPUState *s)
     return errs ? 1 : 0;
 }
 
+/* Native host matmul, then compare against interpreter output */
+static int c_matmul_cmp(GPGPUState *s)
+{
+    uint64_t *bp = test_bp();
+    uint32_t M = (uint32_t)bp[0], K = (uint32_t)bp[1], N = (uint32_t)bp[2];
+    float *A   = (float *)(s->vram_ptr + 0x100000);
+    float *B   = (float *)(s->vram_ptr + 0x600000);
+    float *C_interp = (float *)(s->vram_ptr + 0xB00000);
+
+    float *C_native = calloc(M * N, sizeof(float));
+    if (!C_native) { fprintf(stderr, "  cmp: OOM\n"); return 1; }
+
+    /* host matmul: C = A × B */
+    for (uint32_t row = 0; row < M; row++)
+        for (uint32_t k = 0; k < K; k++) {
+            float aik = A[row * K + k];
+            float *cr = C_native + row * N;
+            float *br = B + k * N;
+            for (uint32_t col = 0; col < N; col++)
+                cr[col] += aik * br[col];
+        }
+
+    int errs = 0;
+    for (uint32_t i = 0; i < M * N && errs < 10; i++) {
+        float got = C_interp[i], exp = C_native[i];
+        if (fabsf(got - exp) > 1e-4f * fabsf(exp) + 1e-4f) {
+            uint32_t row = i / N, col = i % N;
+            fprintf(stderr, "  matmul cmp: C[%u][%u] interp=%.6f native=%.6f diff=%.6e\n",
+                    row, col, got, exp, (double)fabsf(got - exp));
+            errs++;
+        }
+    }
+    free(C_native);
+    return errs ? 1 : 0;
+}
+
 #define B(name, kern, gx, gy, gz, bx, by, bz, fl, setup, p0, p1, p2) \
     test_register((TestCase){name, kern, {gx, gy, gz}, {bx, by, bz}, setup, c_ok, fl, {p0, p1, p2}, true, false})
 
 #define BM(name, kern, gx, gy, gz, bx, by, bz, fl, setup, p0, p1, p2) \
-    test_register((TestCase){name, kern, {gx, gy, gz}, {bx, by, bz}, setup, c_matmul, fl, {p0, p1, p2}, true, false})
+    test_register((TestCase){name, kern, {gx, gy, gz}, {bx, by, bz}, setup, c_matmul, fl, {p0, p1, p2}, true, false, c_matmul_cmp})
 
 void bench_tests_register(void)
 {
