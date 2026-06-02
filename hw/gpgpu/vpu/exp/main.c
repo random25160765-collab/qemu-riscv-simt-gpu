@@ -8,6 +8,7 @@
 #include "state.h"
 #include "config.h"
 #include "test_runner.h"
+#include "core/vram_alloc.h"
 #include "utils.h"
 
 static void help(void)
@@ -55,6 +56,7 @@ int main(int argc, char **argv)
         fprintf(stderr, "VRAM alloc failed\n");
         return 1;
     }
+    vram_alloc_init(&s);
 
     printf("VRAM: %lu MB | %u CU x %u warps/CU x %u lanes/warp\n"
            "Features: perf=" STYLE_BOLD COLOR_MAGENTA "%s" COLOR_RESET " vpu=" COLOR_MAGENTA "%s" COLOR_RESET

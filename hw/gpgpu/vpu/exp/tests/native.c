@@ -8,6 +8,7 @@
 #include <time.h>
 #include "../state.h"
 #include "../core/scheduler.h"
+#include "../core/vram_alloc.h"
 
 #define KERN_ADDR 0x500000
 extern void load_kernel(const char *path, GPGPUState *s, uint32_t addr);
@@ -54,11 +55,20 @@ static void run_native_matmul(GPGPUState *s)
 {
     int M = 128, K = 128, N = 128;
     struct timespec T0, T1;
+
+    vram_alloc_reset(s);
     *(uint32_t *)s->vram_ptr = K;
+    uint32_t A_base = vram_alloc(s, M * K * 4);
+    uint32_t B_base = vram_alloc(s, K * N * 4);
+    uint32_t C_base = vram_alloc(s, M * N * 4);
+    vram_ptr_write(s, PTR_SLOT_A, A_base);
+    vram_ptr_write(s, PTR_SLOT_B, B_base);
+    vram_ptr_write(s, PTR_SLOT_C, C_base);
+
     for (int i = 0; i < M * K; i++)
-        ((float *)(s->vram_ptr + 0x100000))[i] = 1.0f;
+        ((float *)(s->vram_ptr + A_base))[i] = 1.0f;
     for (int i = 0; i < K * N; i++)
-        ((float *)(s->vram_ptr + 0x600000))[i] = 1.0f;
+        ((float *)(s->vram_ptr + B_base))[i] = 1.0f;
     s->kernel.kernel_addr = KERN_ADDR;
     s->kernel.grid_dim[0] = M;
     s->kernel.grid_dim[1] = 1;
@@ -73,8 +83,8 @@ static void run_native_matmul(GPGPUState *s)
     double ti = (T1.tv_sec - T0.tv_sec) + (T1.tv_nsec - T0.tv_nsec) * 1e-9;
 
     volatile float sum = 0;
-    float *A = (float *)(s->vram_ptr + 0x100000), *B = (float *)(s->vram_ptr + 0x600000);
-    float *C = (float *)(s->vram_ptr + 0xB00000);
+    float *A = (float *)(s->vram_ptr + A_base), *B = (float *)(s->vram_ptr + B_base);
+    float *C = (float *)(s->vram_ptr + C_base);
     memset(C, 0, M * N * 4);
     clock_gettime(CLOCK_MONOTONIC, &T0);
     for (int row = 0; row < M; row++)

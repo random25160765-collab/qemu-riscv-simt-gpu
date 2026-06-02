@@ -14,6 +14,7 @@
 #include "stats.h"
 #include "test_runner.h"
 #include "../core/utils.h"
+#include "core/vram_alloc.h"
 #include "memory.h" /* DLOG */
 
 #define KERN_ADDR 0x500000
@@ -71,6 +72,7 @@ static uint64_t g_bp[3]; /* bench params pass-through */
 static int run_one(GPGPUState *s, TestCase *t)
 {
     memset(s->vram_ptr, 0, 16 * 1024 * 1024);
+    vram_alloc_reset(s);
     memcpy(g_bp, t->params, sizeof(g_bp));
     if (t->setup) t->setup(s);
     s->kernel.kernel_addr = KERN_ADDR;

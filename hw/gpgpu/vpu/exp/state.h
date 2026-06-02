@@ -84,6 +84,12 @@ typedef struct GPGPUState {
     /* VRAM (本地堆分配) */
     uint8_t *vram_ptr;
 
+    /* VRAM bitmap allocator: 4KB pages, 64MB max → 2048 bytes */
+#define VRAM_PAGE_SIZE 4096
+#define VRAM_MAX_PAGES ((64 * 1024 * 1024) / VRAM_PAGE_SIZE)
+#define VRAM_BITMAP_SIZE (VRAM_MAX_PAGES / 8)
+    uint8_t vram_bitmap[VRAM_BITMAP_SIZE];
+
     /* Shared memory (per-block, 运行时分配) */
     uint8_t *shm_ptr;
     uint32_t shm_size;

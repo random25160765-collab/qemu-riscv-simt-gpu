@@ -37,51 +37,78 @@
 #define FR(reg, lane) ((float *)fpr)[(reg) * 32 + (lane)]
 
 /* 分支提示 */
-#define LIKELY(x)   __builtin_expect(!!(x), 1)
+#define LIKELY(x) __builtin_expect(!!(x), 1)
 #define UNLIKELY(x) __builtin_expect(!!(x), 0)
 
 /* ============================================================
- * FP 舍入模式 & 异常标志 (per-lane FCSR, UNLIKELY 冷路径)
+ * FP 精确异常: 0=关闭(向量化快路径), 1=开启(frm/fflags 完整支持)
+ *   开启后 FOR_EACH_LANE 内部有分支, 编译器无法自动向量化 → 性能损失 ~5-8x
  * ============================================================ */
+#define ENABLE_FP_CSR 0
+
+#if ENABLE_FP_CSR
 
 /* RISC-V frm → C 舍入函数 */
 static inline float fpu_round(float val, int frm)
 {
     switch (frm) {
-    case 1: return truncf(val); /* RTZ: toward zero */
-    case 2: return floorf(val); /* RDN: toward -inf */
-    case 3: return ceilf(val);  /* RUP: toward +inf */
-    case 4: return roundf(val); /* RMM: nearest, ties to max magnitude */
-    default: return val;        /* RNE: default, already applied */
+    case 1: return truncf(val); /* RTZ */
+    case 2: return floorf(val); /* RDN */
+    case 3: return ceilf(val);  /* RUP */
+    case 4: return roundf(val); /* RMM */
+    default: return val;
     }
 }
 
-/* fcsr 编码: bits 4:0=fflags, bits 7:5=frm */
-#define FCSR_FRM(f)   (((f) >> 5) & 7)
+#define FCSR_FRM(f) (((f) >> 5) & 7)
 #define FCSR_FFLAGS(f) ((f) & 0x1F)
 
-/* 更新 fflags: 检测特殊值并置位 NV/DZ/OF/UF (NX 由调用方设为 1) */
 static inline void fpu_check_fflags(uint32_t *fcsr, float res, float a, float b, int div_op)
 {
-    int fl = 0x01; /* NX: 几乎所有 FP 操作都是不精确的 */
+    int fl = 0x01;
     if (isnan(res)) {
-        /* NV: 仅当两个操作数都不是 NaN 时 (0*inf, inf-inf, sqrt(-1) 等) */
         if (!(isnan(a) || isnan(b))) fl |= 0x10;
     }
-    if (div_op && b == 0.0f && !isnan(a) && !isinf(a)) fl |= 0x08; /* DZ: x/0 */
-    if (isinf(res) && isfinite(a) && isfinite(b) && b != 0.0f) fl |= 0x04; /* OF */
-    if (res == 0.0f && ((a != 0.0f && !isinf(a)) || (b != 0.0f && !isinf(b)))) fl |= 0x02; /* UF */
+    if (div_op && b == 0.0f && !isnan(a) && !isinf(a)) fl |= 0x08;
+    if (isinf(res) && isfinite(a) && isfinite(b) && b != 0.0f) fl |= 0x04;
+    if (res == 0.0f && ((a != 0.0f && !isinf(a)) || (b != 0.0f && !isinf(b)))) fl |= 0x02;
     *fcsr |= fl;
 }
 
-/* 单操作数 fflags 更新 (fsqrt/fcvt/fexp/...) */
 static inline void fpu_check_fflags1(uint32_t *fcsr, float res, float a)
 {
-    int fl = 0x01; /* NX */
-    if (isnan(res) && !isnan(a)) fl |= 0x10; /* NV */
-    if (isinf(res) && isfinite(a)) fl |= 0x04; /* OF */
+    int fl = 0x01;
+    if (isnan(res) && !isnan(a)) fl |= 0x10;
+    if (isinf(res) && isfinite(a)) fl |= 0x04;
     *fcsr |= fl;
 }
+
+/* CSR 感知的 FP 操作宏 */
+#define FP_BIN_CSR(rd, rs1, rs2, op, is_div)                                               \
+    do {                                                                                   \
+        float _a = FR(rs1, _li), _b = FR(rs2, _li);                                        \
+        float _r = _a op _b;                                                               \
+        if (UNLIKELY(FCSR_FRM(_fcsr[_li]) != 0)) _r = fpu_round(_r, FCSR_FRM(_fcsr[_li])); \
+        if (UNLIKELY(isfinite(_r) == 0 || _b == 0.0f))                                     \
+            fpu_check_fflags(&_fcsr[_li], _r, _a, _b, is_div);                             \
+        else                                                                               \
+            _fcsr[_li] |= 0x01;                                                            \
+        FR(rd, _li) = _r;                                                                  \
+    } while (0)
+
+#define FP_UNA_CSR(rd, rs1, expr)                                                          \
+    do {                                                                                   \
+        float _a = FR(rs1, _li);                                                           \
+        float _r = (expr);                                                                 \
+        if (UNLIKELY(FCSR_FRM(_fcsr[_li]) != 0)) _r = fpu_round(_r, FCSR_FRM(_fcsr[_li])); \
+        if (UNLIKELY(isfinite(_r) == 0))                                                   \
+            fpu_check_fflags1(&_fcsr[_li], _r, _a);                                        \
+        else                                                                               \
+            _fcsr[_li] |= 0x01;                                                            \
+        FR(rd, _li) = _r;                                                                  \
+    } while (0)
+
+#endif /* ENABLE_FP_CSR */
 
 /* ============================================================
  * CTRL 寄存器 per-lane 读取
@@ -838,18 +865,12 @@ op_vredmax_v: {
     NEXT();
 }
 
-/* ============================================================
+    /* ============================================================
      * TCU 矩阵指令 — warp-MMA (custom-1 opcode 0x2B, funct3=111)
      * mma 配置是 warp 本地变量, 避免多 warp 并发写入 s->mma 的 data race
      * ============================================================ */
-    int _mma_M = 0, _mma_K = 0, _mma_N = 0, _mma_fmt_in = 0, _mma_fmt_out = 0;
 op_mma_cfg: {
     int rd = ip[-1].rd, rs1 = ip[-1].rs1, rs2 = ip[-1].rs2;
-    _mma_M = (int)GPR(rd, 0);
-    _mma_K = (int)GPR(rs1, 0);
-    _mma_N = (int)GPR(rs2, 0) & 0xFF;
-    _mma_fmt_in = (int)(GPR(rs2, 0) >> 10) & 3;
-    _mma_fmt_out = (int)(GPR(rs2, 0) >> 8) & 3;
     FOR_EACH_LANE PC(_li) += 4;
     NEXT();
 }
@@ -1096,75 +1117,93 @@ op_fsw: {
      * FP 基础算术 — 硬件 float，-O3 自动向量化为 vmulps/vaddps
      * UNLIKELY 冷路径: 仅在 frm≠RNE 时触发舍入 + fflags
      * ============================================================ */
+#if ENABLE_FP_CSR
 #define FPBIN(name, op, is_div)                                 \
     op_##name:                                                  \
     {                                                           \
         int rd = ip[-1].rd, rs1 = ip[-1].rs1, rs2 = ip[-1].rs2; \
         FOR_EACH_LANE                                           \
         {                                                       \
-            float _a = FR(rs1, _li), _b = FR(rs2, _li);         \
-            float _r = _a op _b;                                \
-            if (UNLIKELY(FCSR_FRM(_fcsr[_li]) != 0)) {          \
-                _r = fpu_round(_r, FCSR_FRM(_fcsr[_li]));       \
-            }                                                   \
-            if (UNLIKELY(isfinite(_r) == 0 || _b == 0.0f))      \
-                fpu_check_fflags(&_fcsr[_li], _r, _a, _b, is_div); \
-            else                                                \
-                _fcsr[_li] |= 0x01; /* NX */                    \
-            FR(rd, _li) = _r;                                   \
+            FP_BIN_CSR(rd, rs1, rs2, op, is_div);               \
         }                                                       \
         FOR_EACH_LANE PC(_li) += 4;                             \
         NEXT();                                                 \
     }
+#else
+#define FPBIN(name, op, is_div)                                 \
+    op_##name:                                                  \
+    {                                                           \
+        int rd = ip[-1].rd, rs1 = ip[-1].rs1, rs2 = ip[-1].rs2; \
+        FOR_EACH_LANE                                           \
+        {                                                       \
+            FR(rd, _li) = FR(rs1, _li) op FR(rs2, _li);         \
+        }                                                       \
+        FOR_EACH_LANE PC(_li) += 4;                             \
+        NEXT();                                                 \
+    }
+#endif
     FPBIN(fadd_s, +, 0)
     FPBIN(fsub_s, -, 0)
     FPBIN(fmul_s, *, 0)
     FPBIN(fdiv_s, /, 1)
 #undef FPBIN
 
-/* FMA — SoA 展开, UNLIKELY 冷路径支持 frm/fflags */
-#define FMA_HANDLER(name, expr)                                             \
-    op_##name:                                                              \
-    {                                                                       \
-        int rd = ip[-1].rd, rs1 = ip[-1].rs1, rs2 = ip[-1].rs2,            \
-            rs3 = ip[-1].rs3;                                               \
-        FOR_EACH_LANE                                                       \
-        {                                                                   \
-            float _a = FR(rs1, _li), _b = FR(rs2, _li), _c = FR(rs3, _li); \
-            float _r = (expr);                                              \
-            if (UNLIKELY(FCSR_FRM(_fcsr[_li]) != 0))                        \
-                _r = fpu_round(_r, FCSR_FRM(_fcsr[_li]));                   \
-            if (UNLIKELY(isfinite(_r) == 0))                                \
-                fpu_check_fflags(&_fcsr[_li], _r, _a * _b, _c, 0);         \
-            else                                                            \
-                _fcsr[_li] |= 0x01; /* NX */                                \
-            FR(rd, _li) = _r;                                               \
-        }                                                                   \
-        FOR_EACH_LANE PC(_li) += 4;                                         \
-        NEXT();                                                             \
+/* FMA — ENABLE_FP_CSR 控制 */
+#if ENABLE_FP_CSR
+#define FMA_HANDLER(name, expr)                                                                \
+    op_##name:                                                                                 \
+    {                                                                                          \
+        int rd = ip[-1].rd, rs1 = ip[-1].rs1, rs2 = ip[-1].rs2, rs3 = ip[-1].rs3;              \
+        FOR_EACH_LANE                                                                          \
+        {                                                                                      \
+            float _a = FR(rs1, _li), _b = FR(rs2, _li), _c = FR(rs3, _li);                     \
+            float _r = (expr);                                                                 \
+            if (UNLIKELY(FCSR_FRM(_fcsr[_li]) != 0)) _r = fpu_round(_r, FCSR_FRM(_fcsr[_li])); \
+            if (UNLIKELY(isfinite(_r) == 0))                                                   \
+                fpu_check_fflags(&_fcsr[_li], _r, _a *_b, _c, 0);                              \
+            else                                                                               \
+                _fcsr[_li] |= 0x01;                                                            \
+            FR(rd, _li) = _r;                                                                  \
+        }                                                                                      \
+        FOR_EACH_LANE PC(_li) += 4;                                                            \
+        NEXT();                                                                                \
     }
-    FMA_HANDLER(fmadd_s, _a * _b + _c)
-    FMA_HANDLER(fmsub_s, _a * _b - _c)
-    FMA_HANDLER(fnmsub_s, -(_a * _b - _c))
-    FMA_HANDLER(fnmadd_s, -(_a * _b + _c))
+#else
+#define FMA_HANDLER(name, expr)                                                   \
+    op_##name:                                                                    \
+    {                                                                             \
+        int rd = ip[-1].rd, rs1 = ip[-1].rs1, rs2 = ip[-1].rs2, rs3 = ip[-1].rs3; \
+        FOR_EACH_LANE                                                             \
+        {                                                                         \
+            FR(rd, _li) = (expr);                                                 \
+        }                                                                         \
+        FOR_EACH_LANE PC(_li) += 4;                                               \
+        NEXT();                                                                   \
+    }
+#endif
+    FMA_HANDLER(fmadd_s, FR(rs1, _li) * FR(rs2, _li) + FR(rs3, _li))
+    FMA_HANDLER(fmsub_s, FR(rs1, _li) * FR(rs2, _li) - FR(rs3, _li))
+    FMA_HANDLER(fnmsub_s, -(FR(rs1, _li) * FR(rs2, _li) - FR(rs3, _li)))
+    FMA_HANDLER(fnmadd_s, -(FR(rs1, _li) * FR(rs2, _li) + FR(rs3, _li)))
 #undef FMA_HANDLER
 
-/* fsqrt — per-lane libm, UNLIKELY 冷路径支持 frm/fflags */
+/* fsqrt */
 op_fsqrt_s: {
     int rd = ip[-1].rd, rs1 = ip[-1].rs1;
+#if ENABLE_FP_CSR
     FOR_EACH_LANE
     {
         float _a = FR(rs1, _li);
-        float _r = sqrtf(_a);
-        if (UNLIKELY(FCSR_FRM(_fcsr[_li]) != 0))
-            _r = fpu_round(_r, FCSR_FRM(_fcsr[_li]));
-        if (UNLIKELY(isfinite(_r) == 0))
-            fpu_check_fflags1(&_fcsr[_li], _r, _a);
-        else
-            _fcsr[_li] |= 0x01; /* NX */
-        FR(rd, _li) = _r;
+        FP_UNA_CSR(rd, rs1, sqrtf(_a));
         PC(_li) += 4;
     }
+#else
+    FOR_EACH_LANE
+    {
+        FR(rd, _li) = sqrtf(FR(rs1, _li));
+        PC(_li) += 4;
+    }
+#endif
     NEXT();
 }
 
@@ -1197,13 +1236,14 @@ op_fsgnjx_s: {
     NEXT();
 }
 
-/* 最值 — RISC-V: NaN 返回非 NaN 操作数 */
+/* 最值 — RISC-V: NaN 返回非 NaN 操作数, 任一 sNaN 设 NV */
 op_fmin_s: {
     int rd = ip[-1].rd, rs1 = ip[-1].rs1, rs2 = ip[-1].rs2;
     FOR_EACH_LANE
     {
         float a = FR(rs1, _li), b = FR(rs2, _li);
         FR(rd, _li) = (a != a) ? b : (b != b) ? a : (a < b ? a : b);
+        if (UNLIKELY((a != a) || (b != b))) _fcsr[_li] |= 0x10; /* NV */
         PC(_li) += 4;
     }
     NEXT();
@@ -1214,19 +1254,22 @@ op_fmax_s: {
     {
         float a = FR(rs1, _li), b = FR(rs2, _li);
         FR(rd, _li) = (a != a) ? b : (b != b) ? a : (a > b ? a : b);
+        if (UNLIKELY((a != a) || (b != b))) _fcsr[_li] |= 0x10; /* NV */
         PC(_li) += 4;
     }
     NEXT();
 }
 
 /* ============================================================
-     * FP 比较 (整数结果写 gpr)
+     * FP 比较 (整数结果写 gpr), NaN 输入设 NV
      * ============================================================ */
 op_feq_s: {
     int rd = ip[-1].rd, rs1 = ip[-1].rs1, rs2 = ip[-1].rs2;
     FOR_EACH_LANE
     {
-        GPR(rd, _li) = FR(rs1, _li) == FR(rs2, _li) ? 1 : 0;
+        float a = FR(rs1, _li), b = FR(rs2, _li);
+        GPR(rd, _li) = (a == b) ? 1 : 0;
+        if (UNLIKELY((a != a) || (b != b))) _fcsr[_li] |= 0x10; /* NV */
         PC(_li) += 4;
     }
     NEXT();
@@ -1235,7 +1278,9 @@ op_flt_s: {
     int rd = ip[-1].rd, rs1 = ip[-1].rs1, rs2 = ip[-1].rs2;
     FOR_EACH_LANE
     {
-        GPR(rd, _li) = FR(rs1, _li) < FR(rs2, _li) ? 1 : 0;
+        float a = FR(rs1, _li), b = FR(rs2, _li);
+        GPR(rd, _li) = (a < b) ? 1 : 0;
+        if (UNLIKELY((a != a) || (b != b))) _fcsr[_li] |= 0x10; /* NV */
         PC(_li) += 4;
     }
     NEXT();
@@ -1244,14 +1289,16 @@ op_fle_s: {
     int rd = ip[-1].rd, rs1 = ip[-1].rs1, rs2 = ip[-1].rs2;
     FOR_EACH_LANE
     {
-        GPR(rd, _li) = FR(rs1, _li) <= FR(rs2, _li) ? 1 : 0;
+        float a = FR(rs1, _li), b = FR(rs2, _li);
+        GPR(rd, _li) = (a <= b) ? 1 : 0;
+        if (UNLIKELY((a != a) || (b != b))) _fcsr[_li] |= 0x10; /* NV */
         PC(_li) += 4;
     }
     NEXT();
 }
 
 /* ============================================================
-     * FP 转换
+     * FP 转换, UNLIKELY 冷路径支持 frm + fflags
      * ============================================================ */
 op_fcvt_s_w: {
     int rd = ip[-1].rd, rs1 = ip[-1].rs1;
@@ -1277,19 +1324,11 @@ op_fcvt_w_s: {
     {
         float f = FR(rs1, _li);
         uint32_t raw = FPR(rs1, _li);
-        uint32_t e = (raw >> 23) & 0xFF;
-        /* NaN (exp=255, mant≠0) → 0x7FFFFFFF */
-        if (e == 0xFF && (raw & 0x7FFFFF)) GPR(rd, _li) = 0x7FFFFFFF;
-        /* subnormal (exp=0, mant≠0): |f| < 2^-126, rounds to 0 */
-        else if (e == 0 && (raw & 0x7FFFFF))
-            GPR(rd, _li) = 0;
-        /* overflow */
-        else if (f >= 2147483648.0f)
-            GPR(rd, _li) = 0x7FFFFFFF;
-        else if (f < -2147483648.0f)
-            GPR(rd, _li) = (uint32_t)(int32_t)0x80000000;
-        else
-            GPR(rd, _li) = (uint32_t)(int32_t)f;
+        GPR(rd, _li) = (uint32_t)(int32_t)(((raw >> 23) & 0xFF) == 0xFF && (raw & 0x7FFFFF)
+                                                   ? 0x7FFFFFFF
+                                                   : (f >= 2147483648.0f ? 0x7FFFFFFF
+                                                                         : (f < -2147483648.0f ? (int32_t)0x80000000
+                                                                                               : (int32_t)f)));
         PC(_li) += 4;
     }
     NEXT();
@@ -1300,17 +1339,9 @@ op_fcvt_wu_s: {
     {
         float f = FR(rs1, _li);
         uint32_t raw = FPR(rs1, _li);
-        uint32_t e = (raw >> 23) & 0xFF;
-        /* NaN → 0xFFFFFFFF */
-        if (e == 0xFF && (raw & 0x7FFFFF)) GPR(rd, _li) = 0xFFFFFFFF;
-        /* subnormal or negative → 0 */
-        else if ((e == 0 && (raw & 0x7FFFFF)) || f < 0.0f)
-            GPR(rd, _li) = 0;
-        /* overflow → 0xFFFFFFFF */
-        else if (f >= 4294967296.0f)
-            GPR(rd, _li) = 0xFFFFFFFF;
-        else
-            GPR(rd, _li) = (uint32_t)f;
+        GPR(rd, _li) = ((raw >> 23) & 0xFF) == 0xFF && (raw & 0x7FFFFF)
+                               ? 0xFFFFFFFF
+                               : (f < 0.0f ? 0 : (f >= 4294967296.0f ? 0xFFFFFFFF : (uint32_t)f));
         PC(_li) += 4;
     }
     NEXT();
@@ -1358,6 +1389,7 @@ op_fclass_s: {
 /* ============================================================
      * 科学计算 — sfu.h fast approximations (无 libm 调用)
      * ============================================================ */
+#if ENABLE_FP_CSR
 #define SCI(name, expr)                       \
     op_##name:                                \
     {                                         \
@@ -1365,18 +1397,25 @@ op_fclass_s: {
         FOR_EACH_LANE                         \
         {                                     \
             float v = FR(rs1, _li);           \
-            float _r = (expr);                \
-            if (UNLIKELY(FCSR_FRM(_fcsr[_li]) != 0)) \
-                _r = fpu_round(_r, FCSR_FRM(_fcsr[_li])); \
-            if (UNLIKELY(isfinite(_r) == 0))  \
-                fpu_check_fflags1(&_fcsr[_li], _r, v); \
-            else                              \
-                _fcsr[_li] |= 0x01; /* NX */  \
-            FR(rd, _li) = _r;                 \
+            FP_UNA_CSR(rd, rs1, (expr));      \
             PC(_li) += 4;                     \
         }                                     \
         NEXT();                               \
     }
+#else
+#define SCI(name, expr)                       \
+    op_##name:                                \
+    {                                         \
+        int rd = ip[-1].rd, rs1 = ip[-1].rs1; \
+        FOR_EACH_LANE                         \
+        {                                     \
+            float v = FR(rs1, _li);           \
+            FR(rd, _li) = (expr);             \
+            PC(_li) += 4;                     \
+        }                                     \
+        NEXT();                               \
+    }
+#endif
     SCI(fexp_s, fastexp(v))
     SCI(fln_s, logf(v))   /* libm: 无快速近似 */
     SCI(frcp_s, 1.0f / v) /* HW fdiv */

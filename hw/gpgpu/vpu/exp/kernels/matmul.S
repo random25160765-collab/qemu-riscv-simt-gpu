@@ -33,14 +33,14 @@ _start:
 
     mul  a0, t2, t5
     slli a0, a0, 2
-    lui  a3, 0x100
+    lw   a3, 0x80(zero)          # a3 = ptr_table[0] (A base)
     add  a0, a0, a3             # a0 = A[row][0]
 
     addi a5, zero, 4            # stride = 4
     slli a6, t4, 2              # a6 = N * 4
 
     slli a2, t1, 2
-    lui  a4, 0x600
+    lw   a4, 0x84(zero)          # a4 = ptr_table[1] (B base)
     add  a2, a2, a4             # a2 = B[k][col_start]
 
     andi t6, t5, -4             # K rounded down to 4
@@ -87,7 +87,7 @@ done:
     mul  a2, t2, t4
     add  a2, a2, t1
     slli a2, a2, 2
-    lui  t0, 0xB00
+    lw   t0, 0x88(zero)          # t0 = ptr_table[2] (C base)
     add  a2, a2, t0             # a2 = C[row][col_start]
     addi a5, zero, 4
     mma.st acc0, (a2), a5

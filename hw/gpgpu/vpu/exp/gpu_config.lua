@@ -11,7 +11,7 @@ return {
         tcu    = true,  -- TCU tensor accelerator (WIP)
         sfu    = true,   -- special function unit (exp/ln/sin/cos/...)
         lp     = true,   -- low-precision float (bf16/e4m3/e5m2/e2m1)
-        debug  = true,  -- event output via ring buffer
+        debug  = false,  -- event output via ring buffer
         trace  = false,  -- instruction-level trace
         perf   = false,   -- hot-path stats: bandwidth, branches, divergence
     },

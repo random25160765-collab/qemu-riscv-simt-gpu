@@ -20,7 +20,7 @@ RV_CFLAGS = -march=rv32imf -mabi=ilp32 -nostdlib -Ttext=0x0 -Wl,--build-id=none
 
 SRCS  = main.c test_runner.c config.c stats.c
 SRCS += tests/func.c tests/bench.c tests/native.c tests/register.c
-SRCS += core/engine.c core/scheduler.c
+SRCS += core/engine.c core/scheduler.c core/vram_alloc.c
 SRCS += core/decode_trie.c core/lpfp.c core/memory.c core/proto.c core/table.c
 SRCS += vpu/vpu.c tcu/tcu.c
 OBJS  = $(SRCS:.c=.o)

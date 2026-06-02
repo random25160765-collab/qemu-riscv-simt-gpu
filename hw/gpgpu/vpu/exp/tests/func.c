@@ -4,9 +4,11 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdio.h>
 #include <math.h>
 #include "../state.h"
 #include "../test_runner.h"
+#include "../core/vram_alloc.h"
 
 /* --- vecmul --- */
 static void s_vm(GPGPUState *s)
@@ -156,14 +158,21 @@ static int c_mem(GPGPUState *s)
 static void s_mm(GPGPUState *s)
 {
     *(uint32_t *)s->vram_ptr = 2;
-    ((float *)(s->vram_ptr + 0x100000))[0] = 1;
-    ((float *)(s->vram_ptr + 0x100000))[1] = 2;
-    ((float *)(s->vram_ptr + 0x600000))[0] = 3;
-    ((float *)(s->vram_ptr + 0x600000))[1] = 4;
+    uint32_t A_base = vram_alloc(s, 2 * 4);
+    uint32_t B_base = vram_alloc(s, 2 * 4);
+    uint32_t C_base = vram_alloc(s, 1 * 4);
+    vram_ptr_write(s, PTR_SLOT_A, A_base);
+    vram_ptr_write(s, PTR_SLOT_B, B_base);
+    vram_ptr_write(s, PTR_SLOT_C, C_base);
+    ((float *)(s->vram_ptr + A_base))[0] = 1;
+    ((float *)(s->vram_ptr + A_base))[1] = 2;
+    ((float *)(s->vram_ptr + B_base))[0] = 3;
+    ((float *)(s->vram_ptr + B_base))[1] = 4;
 }
 static int c_mm(GPGPUState *s)
 {
-    return fabsf(((float *)(s->vram_ptr + 0xB00000))[0] - 11) > 1e-3f;
+    uint32_t C_base = vram_ptr_read(s, PTR_SLOT_C);
+    return fabsf(((float *)(s->vram_ptr + C_base))[0] - 11) > 1e-3f;
 }
 
 /* --- dot product --- */
@@ -281,14 +290,20 @@ static int c_vpu_vm(GPGPUState *s)
 static void s_mma_f(GPGPUState *s)
 {
     *(uint32_t *)s->vram_ptr = 4; /* K */
+    uint32_t A_base = vram_alloc(s, 4 * 4);
+    uint32_t B_base = vram_alloc(s, 4 * 32 * 4);
+    uint32_t C_base = vram_alloc(s, 32 * 4);
+    vram_ptr_write(s, PTR_SLOT_A, A_base);
+    vram_ptr_write(s, PTR_SLOT_B, B_base);
+    vram_ptr_write(s, PTR_SLOT_C, C_base);
     for (int i = 0; i < 4; i++)
-        ((float *)(s->vram_ptr + 0x100000))[i] = 1.0f;
+        ((float *)(s->vram_ptr + A_base))[i] = 1.0f;
     for (int i = 0; i < 4 * 32; i++)
-        ((float *)(s->vram_ptr + 0x600000))[i] = 1.0f;
+        ((float *)(s->vram_ptr + B_base))[i] = 1.0f;
 }
 static int c_mma_f(GPGPUState *s)
 {
-    float *C = (float *)(s->vram_ptr + 0xB00000);
+    float *C = (float *)(s->vram_ptr + vram_ptr_read(s, PTR_SLOT_C));
     for (int i = 0; i < 32; i++)
         if (fabsf(C[i] - 4.0f) > 1e-4f) return 1;
     return 0;
@@ -298,7 +313,7 @@ static int c_mma_f(GPGPUState *s)
 void func_tests_register(void)
 {
 #define F(name, kern, gx, gy, gz, bx, by, bz, setup, check) \
-    test_register((TestCase){name, kern, {gx, gy, gz}, {bx, by, bz}, setup, check, 0, {0, 0, 0}, false, false})
+    test_register((TestCase){name, kern, {gx, gy, gz}, {bx, by, bz}, setup, check, 0, {0, 0, 0}, false, false, NULL})
 
     F("Vector Add", "kernels/vecmul.bin", 1, 1, 1, 2048, 1, 1, s_vm, c_vm);
     F("SAXPY", "kernels/saxpy.bin", 1, 1, 1, 1, 1, 1, s_saxpy, c_saxpy);
