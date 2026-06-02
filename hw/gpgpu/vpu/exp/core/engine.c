@@ -92,6 +92,20 @@ static int perf_enabled = -1; /* -1=unset, 从 config 首次读 */
         x;              \
     }
 
+
+    /* 合并分析: warp 内 32 lane 访存是否在同 64B cache line */
+    #define COALESCE(rs1, imm) do { \
+        if (perf_enabled) { \
+            uint32_t _mn = 0xFFFFFFFF, _mx = 0; \
+            for (int _l = 0; _l < 32; _l++) if ((_active >> _l) & 1) { \
+                uint32_t _ad = GPR(rs1, _l) + (imm); \
+                if (_ad < _mn) _mn = _ad; \
+                if (_ad > _mx) _mx = _ad; \
+            } \
+            if ((_mx - _mn) < 64) s->stats.coal_ops++; \
+            s->stats.coal_total++; \
+        } \
+    } while(0)
 void engine_resolve_handlers(ThOp *code, int tcount)
 {
     (void)code;
@@ -192,7 +206,7 @@ int engine_exec(ThOp *code, int tcount, const EngineContext *ctx, uint32_t gpr[3
         goto *ip++->handler;                                                           \
     } while (0)
 
-    NEXT();
+    goto *ip++->handler; /* 首条: 绕开 NEXT() 的 ip[-1] 越界 */
 
 /* ============================================================
      * 无条件跳转 (所有 lane 统一, 不发散)
@@ -291,6 +305,7 @@ op_lb: {
         PC(_li) += 4;
     }
     PERF_IF(s->stats.bytes_read += __builtin_popcount(_active) * 1;)
+        COALESCE(ip[-1].rs1, ip[-1].imm);
     NEXT();
 }
 op_lh: {
@@ -303,6 +318,7 @@ op_lh: {
         PC(_li) += 4;
     }
     PERF_IF(s->stats.bytes_read += __builtin_popcount(_active) * 2;)
+        COALESCE(ip[-1].rs1, ip[-1].imm);
     NEXT();
 }
 op_lw: {
@@ -314,6 +330,7 @@ op_lw: {
         PC(_li) += 4;
     }
     PERF_IF(s->stats.bytes_read += __builtin_popcount(_active) * 4;)
+        COALESCE(ip[-1].rs1, ip[-1].imm);
     NEXT();
 }
 op_lbu: {
@@ -325,6 +342,7 @@ op_lbu: {
         PC(_li) += 4;
     }
     PERF_IF(s->stats.bytes_read += __builtin_popcount(_active) * 1;)
+        COALESCE(ip[-1].rs1, ip[-1].imm);
     NEXT();
 }
 op_lhu: {
@@ -336,6 +354,7 @@ op_lhu: {
         PC(_li) += 4;
     }
     PERF_IF(s->stats.bytes_read += __builtin_popcount(_active) * 2;)
+        COALESCE(ip[-1].rs1, ip[-1].imm);
     NEXT();
 }
 
@@ -639,6 +658,7 @@ op_fused_vecmul: {
     {
         uint64_t n = __builtin_popcount(_active);
         PERF_IF(s->stats.bytes_read += n * 8;)
+        COALESCE(ip[-1].rs1, ip[-1].imm);
         PERF_IF(s->stats.bytes_write += n * 4;)
         PERF_IF(s->stats.cat[CAT_MEM] += n * 3;) PERF_IF(s->stats.cat[CAT_FP] += n;)
     }
@@ -676,6 +696,7 @@ op_fused_matmul_loop: {
     {
         uint64_t n = __builtin_popcount(_active);
         PERF_IF(s->stats.bytes_read += n * 8 * (uint64_t)K;)
+        COALESCE(ip[-1].rs1, ip[-1].imm);
         PERF_IF(s->stats.cat[CAT_MEM] += n * 2 * (uint64_t)K;)
         PERF_IF(s->stats.cat[CAT_FP] += n * (uint64_t)K;)
         PERF_IF(s->stats.cat[CAT_ALU] += n * (uint64_t)K;)
@@ -712,6 +733,7 @@ op_fused_ld2_fma: {
     {
         uint64_t n = __builtin_popcount(_active);
         PERF_IF(s->stats.bytes_read += n * 8;)
+        COALESCE(ip[-1].rs1, ip[-1].imm);
         PERF_IF(s->stats.cat[CAT_MEM] += n * 2;) PERF_IF(s->stats.cat[CAT_FP] += n;)
     }
     ip += skip;
@@ -738,6 +760,7 @@ op_fused_scal_mul: {
     {
         uint64_t n = __builtin_popcount(_active);
         PERF_IF(s->stats.bytes_read += n * 8;)
+        COALESCE(ip[-1].rs1, ip[-1].imm);
         PERF_IF(s->stats.bytes_write += n * 4;)
         PERF_IF(s->stats.cat[CAT_MEM] += n * 3;) PERF_IF(s->stats.cat[CAT_FP] += n;)
     }
@@ -764,6 +787,7 @@ op_fused_gelu: {
     {
         uint64_t n = __builtin_popcount(_active);
         PERF_IF(s->stats.bytes_read += n * 4;)
+        COALESCE(ip[-1].rs1, ip[-1].imm);
         PERF_IF(s->stats.bytes_write += n * 4;)
         PERF_IF(s->stats.cat[CAT_MEM] += n * 2;) PERF_IF(s->stats.cat[CAT_FP] += n * 3;)
     }
@@ -791,6 +815,7 @@ op_fused_softmax: {
     {
         uint64_t n = __builtin_popcount(_active);
         PERF_IF(s->stats.bytes_read += n * 4;)
+        COALESCE(ip[-1].rs1, ip[-1].imm);
         PERF_IF(s->stats.bytes_write += n * 4;)
         PERF_IF(s->stats.cat[CAT_MEM] += n * 2;) PERF_IF(s->stats.cat[CAT_FP] += n * 2;)
     }
@@ -889,6 +914,13 @@ op_tex: {
     {
         float u = fabsf(FR(rs1, _li)), v = fabsf(FR(rs2, _li));
         int iu = (int)u, iv = (int)v;
+        /* texture is 256-wide; clamp coords to VRAM bounds */
+        if (iu < 0) iu = 0;
+        if (iu > 254) { iu = 254; s->error_status |= GPGPU_ERR_VRAM_FAULT; }
+        int max_row = (int)((s->vram_size - base) / (256 * 4)) - 1;
+        if (max_row < 1) max_row = 1;
+        if (iv < 0) iv = 0;
+        if (iv >= max_row) { iv = max_row - 1; s->error_status |= GPGPU_ERR_VRAM_FAULT; }
         float fu = u - (float)iu, fv = v - (float)iv;
         float *tex = (float *)(s->vram_ptr + base);
         float s00 = tex[iv * 256 + iu], s10 = tex[iv * 256 + iu + 1];
@@ -947,6 +979,7 @@ op_flw: {
         PC(_li) += 4;
     }
     PERF_IF(s->stats.bytes_read += __builtin_popcount(_active) * 4;)
+        COALESCE(ip[-1].rs1, ip[-1].imm);
     NEXT();
 }
 op_fsw: {
@@ -1143,9 +1176,9 @@ op_fcvt_w_s: {
         uint32_t raw = FPR(rs1, _li);
         GPR(rd, _li) = (uint32_t)(int32_t)(((raw >> 23) & 0xFF) == 0xFF && (raw & 0x7FFFFF)
                                                    ? 0x7FFFFFFF
-                                                   : (f > 2147483648.0f ? 0x7FFFFFFF
-                                                                        : (f < -2147483648.0f ? (int32_t)0x80000000
-                                                                                              : (int32_t)f)));
+                                                   : (f >= 2147483648.0f ? 0x7FFFFFFF
+                                                                         : (f < -2147483648.0f ? (int32_t)0x80000000
+                                                                                               : (int32_t)f)));
         PC(_li) += 4;
     }
     NEXT();
@@ -1158,7 +1191,7 @@ op_fcvt_wu_s: {
         uint32_t raw = FPR(rs1, _li);
         GPR(rd, _li) = ((raw >> 23) & 0xFF) == 0xFF && (raw & 0x7FFFFF)
                                ? 0xFFFFFFFF
-                               : (f < 0.0f ? 0 : (f > 4294967296.0f ? 0xFFFFFFFF : (uint32_t)f));
+                               : (f < 0.0f ? 0 : (f >= 4294967296.0f ? 0xFFFFFFFF : (uint32_t)f));
         PC(_li) += 4;
     }
     NEXT();
@@ -1240,8 +1273,7 @@ op_csrrw: {
         uint32_t old = 0;
         switch (csr) {
         case CSR_MHARTID:
-            old = MHARTID(_li);
-            MHARTID(_li) = GPR(rs1, _li);
+            old = MHARTID(_li); /* read-only per RISC-V spec */
             break;
         case CSR_FFLAGS:
             old = FCSR(_li) & 0x1F;
@@ -1269,8 +1301,7 @@ op_csrrs: {
         uint32_t old = 0, mask = GPR(rs1, _li);
         switch (csr) {
         case CSR_MHARTID:
-            old = MHARTID(_li);
-            if (rs1) MHARTID(_li) |= mask;
+            old = MHARTID(_li); /* read-only per RISC-V spec */
             break;
         case CSR_FFLAGS:
             old = FCSR(_li) & 0x1F;
@@ -1298,8 +1329,7 @@ op_csrrc: {
         uint32_t old = 0, mask = GPR(rs1, _li);
         switch (csr) {
         case CSR_MHARTID:
-            old = MHARTID(_li);
-            if (rs1) MHARTID(_li) &= ~mask;
+            old = MHARTID(_li); /* read-only per RISC-V spec */
             break;
         case CSR_FFLAGS:
             old = FCSR(_li) & 0x1F;
@@ -1328,8 +1358,7 @@ op_csrrwi: {
         uint32_t old = 0;
         switch (csr) {
         case CSR_MHARTID:
-            old = MHARTID(_li);
-            MHARTID(_li) = zimm;
+            old = MHARTID(_li); /* read-only per RISC-V spec */
             break;
         case CSR_FFLAGS:
             old = FCSR(_li) & 0x1F;
@@ -1358,8 +1387,7 @@ op_csrrsi: {
         uint32_t old = 0;
         switch (csr) {
         case CSR_MHARTID:
-            old = MHARTID(_li);
-            if (ip[-1].rs1) MHARTID(_li) |= zimm;
+            old = MHARTID(_li); /* read-only per RISC-V spec */
             break;
         case CSR_FFLAGS:
             old = FCSR(_li) & 0x1F;
@@ -1388,8 +1416,7 @@ op_csrrci: {
         uint32_t old = 0;
         switch (csr) {
         case CSR_MHARTID:
-            old = MHARTID(_li);
-            if (ip[-1].rs1) MHARTID(_li) &= ~zimm;
+            old = MHARTID(_li); /* read-only per RISC-V spec */
             break;
         case CSR_FFLAGS:
             old = FCSR(_li) & 0x1F;

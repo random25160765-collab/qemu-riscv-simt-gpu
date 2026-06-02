@@ -8,6 +8,34 @@
 #include "gpgpu_core.h"
 #include "memory.h"
 
+/* ============================================================
+ * Sector cache: 64B sectors, 128-entry direct-mapped
+ * 只记 tag + 计数, 不存数据 — 纯统计用途
+ * ============================================================ */
+#define CACHE_SECTORS 128
+#define SECTOR_SHIFT  6          /* 64B per sector */
+static uint32_t cache_tags[CACHE_SECTORS];  /* tag = addr >> SECTOR_SHIFT */
+static int cache_valid[CACHE_SECTORS];
+
+void cache_reset(void)
+{
+    memset(cache_valid, 0, sizeof(cache_valid));
+}
+
+static inline void cache_access(GPGPUState *s, uint32_t addr)
+{
+    if (!s->cfg.features.perf) return;
+    uint32_t tag = addr >> SECTOR_SHIFT;
+    int idx = tag % CACHE_SECTORS;
+    if (cache_valid[idx] && cache_tags[idx] == tag) {
+        s->stats.cache_hits++;
+    } else {
+        s->stats.cache_misses++;
+        cache_valid[idx] = 1;
+        cache_tags[idx] = tag;
+    }
+}
+
 uint32_t gpu_read(GPGPUState *s, uint32_t addr, int len)
 {
     /* Shared memory (0x80001000+) */
@@ -42,6 +70,7 @@ uint32_t gpu_read(GPGPUState *s, uint32_t addr, int len)
     }
 
     out_of_bound(s, addr, len);
+    cache_access(s, addr);
     switch (len) {
     case 1: return *(uint8_t *)(s->vram_ptr + addr);
     case 2: return *(uint16_t *)(s->vram_ptr + addr);
@@ -73,6 +102,7 @@ void gpu_write(GPGPUState *s, uint32_t addr, int len, uint32_t data)
     }
 
     out_of_bound(s, addr, len);
+    cache_access(s, addr);
     switch (len) {
     case 1: *(uint8_t *)(s->vram_ptr + addr) = data; break;
     case 2: *(uint16_t *)(s->vram_ptr + addr) = data; break;

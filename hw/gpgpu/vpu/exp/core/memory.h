@@ -37,5 +37,6 @@ static inline void get_write_addr(void *addr, int len, uint32_t data)
 
 uint32_t gpu_read(GPGPUState *s, uint32_t addr, int len);
 void gpu_write(GPGPUState *s, uint32_t addr, int len, uint32_t data);
+void cache_reset(void);
 
 #endif /* MEMORY_H */

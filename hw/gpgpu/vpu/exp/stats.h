@@ -18,6 +18,8 @@ typedef struct {
     uint64_t bytes_r, bytes_w;
     uint64_t cat[4], cat_static[4];
     uint64_t branches, diverges;
+    uint64_t cache_hits, cache_misses;
+    uint64_t coal_ops, coal_total;
     bool pass, bench;
 } StatsEntry;
 

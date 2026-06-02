@@ -117,6 +117,10 @@ typedef struct GPGPUState {
         uint64_t simt_diverges;  /* 分歧分支数 (engine DIV_BR) */
         uint64_t bytes_read;     /* VRAM 读 (engine load handlers) */
         uint64_t bytes_write;    /* VRAM 写 (engine store handlers) */
+        uint64_t cache_hits;     /* sector cache 命中 (memory.c) */
+        uint64_t cache_misses;   /* sector cache 缺失 (memory.c) */
+        uint64_t coal_ops;       /* 合并访问: 32-lane 在同一 cache line (engine loads) */
+        uint64_t coal_total;     /* 总 load 操作数 */
     } stats;
 } GPGPUState;
 

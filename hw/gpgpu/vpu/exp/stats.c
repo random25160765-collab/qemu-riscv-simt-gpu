@@ -42,6 +42,10 @@ void stats_snapshot(const GPGPUState *s, const char *name, double us, uint64_t f
     memcpy(e->cat_static, s->stats.cat_static, sizeof(e->cat_static));
     e->branches = s->stats.total_branches;
     e->diverges = s->stats.simt_diverges;
+    e->cache_hits   = s->stats.cache_hits;
+    e->cache_misses = s->stats.cache_misses;
+    e->coal_ops     = s->stats.coal_ops;
+    e->coal_total   = s->stats.coal_total;
     e->bench = bench;
     e->pass = pass;
 }
@@ -78,6 +82,7 @@ void stats_render(void)
 
     /* detect which columns have data */
     bool has_perf = false, has_bw = false, has_mix = false, has_div = false;
+    bool has_cache = false, has_coal = false;
     for (int i = 0; i < n_entries; i++) {
         StatsEntry *e = &entries[i];
         if (e->bench && e->flops) has_perf = true;
@@ -87,6 +92,8 @@ void stats_render(void)
             mt += e->cat[c] + e->cat_static[c];
         if (mt > 0) has_mix = true;
         if (e->branches > 0) has_div = true;
+        if (e->cache_hits + e->cache_misses > 0) has_cache = true;
+        if (e->coal_total > 0) has_coal = true;
     }
 
     int name_w = 5;
@@ -102,6 +109,8 @@ void stats_render(void)
     if (has_bw) printf("  %-26s", "bandwidth");
     if (has_mix) printf("  %-28s", "mix");
     if (has_div) printf(" %-12s", "div");
+    if (has_cache) printf(" %7s", "cache");
+    if (has_coal) printf(" %7s", "coalesc");
     printf(" %s\n", "");
 
     printf("  " KDIM "%-*s %8s", name_w, "----", "------");
@@ -110,6 +119,8 @@ void stats_render(void)
     if (has_bw) printf("  %-26s", "--------------------------");
     if (has_mix) printf("  %-28s", "----------------------------");
     if (has_div) printf(" %-12s", "------------");
+    if (has_cache) printf(" %7s", "-------");
+    if (has_coal) printf(" %7s", "-------");
     printf(" %s\n" KNRM, "----");
 
     /* rows */
@@ -151,6 +162,21 @@ void stats_render(void)
                        100.0*e->diverges/e->branches);
             else
                 printf("  %8s", "");
+        }
+
+        if (has_cache) {
+            uint64_t tot = e->cache_hits + e->cache_misses;
+            if (tot > 0)
+                printf(" %6.0f%%", 100.0*e->cache_hits/tot);
+            else
+                printf(" %7s", "");
+        }
+
+        if (has_coal) {
+            if (e->coal_total > 0)
+                printf(" %6.0f%%", 100.0*e->coal_ops/e->coal_total);
+            else
+                printf(" %7s", "");
         }
 
         printf("  %s%s%s\n", e->pass ? KGRN : KRED, e->pass ? " PASS" : " FAIL", KNRM);

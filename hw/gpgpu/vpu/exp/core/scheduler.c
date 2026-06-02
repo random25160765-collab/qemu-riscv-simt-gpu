@@ -191,6 +191,7 @@ static void *exec_block(void *arg)
 int scheduler_run_kernel(GPGPUState *s)
 {
     memset(&s->stats, 0, sizeof(s->stats));
+    cache_reset();
 
     uint32_t gd[3] = {s->kernel.grid_dim[0], s->kernel.grid_dim[1], s->kernel.grid_dim[2]};
     uint32_t bd[3] = {s->kernel.block_dim[0], s->kernel.block_dim[1], s->kernel.block_dim[2]};
