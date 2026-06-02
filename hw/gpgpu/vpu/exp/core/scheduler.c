@@ -116,7 +116,8 @@ static int exec_warp(GPGPUState *s, GPGPUWarp *warp, ThOp *code, int tcount, Blo
 #define SIMT_STACK_MAX 32
     SIMTFrame _stk[SIMT_STACK_MAX];
     int _sdepth = 0;
-    int ret = engine_exec(code, tcount, &ctx, gpr, fpr, pc, mhartid, fcsr, _stk, &_sdepth, -1);
+    float mma_acc[8 * 32] = {0};
+    int ret = engine_exec(code, tcount, &ctx, gpr, fpr, pc, mhartid, fcsr, _stk, &_sdepth, -1, mma_acc);
 
     if (ret & 0x10000) {
         /* barrier reached: 保存状态, 计数, 全部到达后恢复 */
@@ -128,7 +129,7 @@ static int exec_warp(GPGPUState *s, GPGPUWarp *warp, ThOp *code, int tcount, Blo
             /* FIXME: WarpSlot persistence for true multi-warp resume */
         }
         /* for now: continue from barrier (sequential warps, implicit sync) */
-        ret = engine_exec(code, tcount, &ctx, gpr, fpr, pc, mhartid, fcsr, _stk, &_sdepth, rpc);
+        ret = engine_exec(code, tcount, &ctx, gpr, fpr, pc, mhartid, fcsr, _stk, &_sdepth, rpc, mma_acc);
     }
 
     soa_to_aos(warp, gpr, fpr, pc, mhartid, fcsr);
@@ -197,9 +198,13 @@ int scheduler_run_kernel(GPGPUState *s)
     uint32_t kern_addr = s->kernel.kernel_addr;
     uint32_t tpb = bd[0] * bd[1] * bd[2];
 
+    DLOG(s, "[debug] scheduler: addr=0x%x ksize=%u grid=%u,%u,%u block=%u,%u,%u tpb=%u\n", kern_addr, s->kern_size,
+         gd[0], gd[1], gd[2], bd[0], bd[1], bd[2], tpb);
+
     int tcount = 0;
     uint32_t ksize = s->kern_size ? s->kern_size : 4096;
     ThOp *code = scheduler_predecode(s, kern_addr, ksize, &tcount);
+    DLOG(s, "[debug] scheduler: predecoded %d ops\n", tcount);
     if (!code) return -1;
 
     /* 分类: 总是设置 code[i].cat (NEXT() 热路径读取) */
@@ -223,6 +228,7 @@ int scheduler_run_kernel(GPGPUState *s)
             case 0x4F:
             case 0x53: c = CAT_FP; break;
             case 0x73: c = CAT_SYS; break;
+            case 0x2B: /* custom-1: VPU vector / TCU tensor */ c = (((inst >> 12) & 7) == 7) ? CAT_TCU : CAT_VPU; break;
             }
         code[i].cat = (uint8_t)c;
     }
@@ -233,6 +239,31 @@ int scheduler_run_kernel(GPGPUState *s)
     for (int i = 0; i < tcount; i++)
         s->stats.cat_static[code[i].cat]++;
     s->stats.kernel_ops = (uint64_t)tcount;
+
+    /* 验证: 扫描 kernel, 检查禁用指令 (vpu/tcu/lp/sfu) */
+    for (int i = 0; i < tcount; i++) {
+        uint32_t op = code[i].inst & 0x7F;
+        uint32_t f3 = (code[i].inst >> 12) & 7;
+        const char *why = NULL;
+        if (op == 0x2B && f3 != 7 && !s->cfg.features.vpu)
+            why = "VPU disabled but kernel uses vector instructions";
+        else if (op == 0x2B && f3 == 7 && !s->cfg.features.tcu)
+            why = "TCU disabled but kernel uses tensor instructions";
+        else if (op == 0x53 && !s->cfg.features.lp) {
+            uint32_t f7 = (code[i].inst >> 25) & 0x7F;
+            if (f7 == 0x22 || f7 == 0x24 || f7 == 0x26)
+                why = "LP-float disabled but kernel uses bf16/e4m3/e5m2/e2m1";
+        } else if (op == 0x53 && !s->cfg.features.sfu) {
+            uint32_t f7 = (code[i].inst >> 25) & 0x7F;
+            if (f7 == 0x30)
+                why = "SFU disabled but kernel uses fexp/fln/frcp/fsin/fcos";
+        }
+        if (why) {
+            fprintf(stderr, "ERROR: %s (inst 0x%08x at offset %d)\n", why, code[i].inst, i);
+            free(code);
+            return -1;
+        }
+    }
 
     /* 收集所有 block */
     uint32_t total_blocks = gd[0] * gd[1] * gd[2];

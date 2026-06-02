@@ -2,7 +2,9 @@
  * tests/bench.c — Performance benchmarks
  */
 #include <stdint.h>
+#include <stdio.h>
 #include <string.h>
+#include <math.h>
 #include "../state.h"
 #include "../test_runner.h"
 
@@ -56,18 +58,40 @@ static int c_ok(GPGPUState *s)
     return 0;
 }
 
+static int c_matmul(GPGPUState *s)
+{
+    uint64_t *bp = test_bp();
+    uint32_t M = (uint32_t)bp[0], K = (uint32_t)bp[1], N = (uint32_t)bp[2];
+    float *C = (float *)(s->vram_ptr + 0x300000);
+    int errs = 0;
+    for (uint32_t row = 0; row < M && errs < 5; row++) {
+        for (uint32_t col = 0; col < N && errs < 5; col++) {
+            float expected = (float)K; /* all A=B=1.0, so C[i][j]=K */
+            float got = C[row * N + col];
+            if (fabsf(got - expected) > 1e-4f * expected + 1e-4f) {
+                fprintf(stderr, "  matmul fail: C[%u][%u]=%.3f expected %.3f\n", row, col, got, expected);
+                errs++;
+            }
+        }
+    }
+    return errs ? 1 : 0;
+}
+
 #define B(name, kern, gx, gy, gz, bx, by, bz, fl, setup, p0, p1, p2) \
     test_register((TestCase){name, kern, {gx, gy, gz}, {bx, by, bz}, setup, c_ok, fl, {p0, p1, p2}, true, false})
+
+#define BM(name, kern, gx, gy, gz, bx, by, bz, fl, setup, p0, p1, p2) \
+    test_register((TestCase){name, kern, {gx, gy, gz}, {bx, by, bz}, setup, c_matmul, fl, {p0, p1, p2}, true, false})
 
 void bench_tests_register(void)
 {
     B("vecmul 64K", "kernels/vecmul.bin", 2048, 1, 1, 32, 1, 1, 65536, s_vecmul, 65536, 0, 0);
     B("vecmul 256K", "kernels/vecmul.bin", 8192, 1, 1, 32, 1, 1, 262144, s_vecmul, 262144, 0, 0);
     B("vecmul 1M", "kernels/vecmul.bin", 32768, 1, 1, 32, 1, 1, 1048576, s_vecmul, 1048576, 0, 0);
-    B("matmul 128", "kernels/matmul.bin", 128, 1, 1, 128, 1, 1, 4194304ULL, s_matmul, 128, 128, 128);
-    B("matmul 256", "kernels/matmul.bin", 256, 1, 1, 256, 1, 1, 33554432ULL, s_matmul, 256, 256, 256);
-    B("matmul 512", "kernels/matmul.bin", 512, 1, 1, 512, 1, 1, 268435456ULL, s_matmul, 512, 512, 512);
-    B("matmul 1024", "kernels/matmul.bin", 1024, 1, 1, 1024, 1, 1, 2147483648ULL, s_matmul, 1024, 1024, 1024);
+    BM("matmul 128", "kernels/matmul.bin", 128, 1, 1, 128, 1, 1, 4194304ULL, s_matmul, 128, 128, 128);
+    BM("matmul 256", "kernels/matmul.bin", 256, 1, 1, 256, 1, 1, 33554432ULL, s_matmul, 256, 256, 256);
+    BM("matmul 512", "kernels/matmul.bin", 512, 1, 1, 512, 1, 1, 268435456ULL, s_matmul, 512, 512, 512);
+    BM("matmul 1024", "kernels/matmul.bin", 1024, 1, 1, 1024, 1, 1, 2147483648ULL, s_matmul, 1024, 1024, 1024);
     B("scal_mul 64K", "kernels/scal_mul.bin", 2048, 1, 1, 32, 1, 1, 65536, s_scal, 65536, 0, 0);
     B("gelu 64K", "kernels/gelu.bin", 2048, 1, 1, 32, 1, 1, 393216, s_gelu, 65536, 0, 0);
     B("softmax 256", "kernels/softmax.bin", 256, 1, 1, 1, 1, 1, 327680, s_softmax, 256, 0, 0);

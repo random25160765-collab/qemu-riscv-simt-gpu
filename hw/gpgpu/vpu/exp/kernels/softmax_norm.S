@@ -42,7 +42,7 @@ _start:
     /* 读 sum = Σ e^{x}，用 frcp.s 算 1/sum */
     lui  t0, 0x400
     flw  f1, 0(t0)          /* f1 = sum */
-    .word 0x602080D3        /* frcp.s f1, f1 */
+    frcp.s f1, f1
 
     /* 边界检查 */
     bge  t4, t3, exit

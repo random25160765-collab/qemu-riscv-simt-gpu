@@ -1,80 +1,62 @@
 /*
- * softmax.S — 完整 Softmax（自包含，单 kernel）
- *   softmax(x_i) = e^{x_i} / Σ_j e^{x_j}
- *
- * 每个线程独立遍历全部 N 个输入计算 sum，避免跨线程 reduction。
- * 总计算量 O(N²)，对模拟器可接受。
- *
- * 输入:  x[N] @ 0x100000
- * 输出:  y[N] @ 0x200000
- * 参数:  grid_dim[0] = N
+ * softmax.S — VPU Softmax: y[i] = exp(x[i]) / sum(exp(x[j]))
+ * VPU: vld.v/vfexp.v/vredsum.v 批量, warp 级
  */
 
 .section .text
 .globl _start
 
 _start:
-    /* threadIdx.x */
+    /* threadIdx.x (per-lane) */
     lui  t0, 0x80000
     lw   t1, 0(t0)
 
-    /* blockIdx.x */
-    lui  t0, 0x80000
-    addi t0, t0, 0x10
-    lw   t2, 0(t0)
+    /* my_idx = threadIdx.x & ~31 (warp base) + lane offset */
+    /* For softmax, each element is independent output; we need the actual thread index */
+    /* But the reduction loop needs to start from warp base */
+    addi t0, zero, -32
+    and  t0, t1, t0           /* t0 = warp_base (same for all lanes) */
 
-    /* N = grid_dim[0] */
-    lui  t0, 0x80000
-    addi t0, t0, 0x20
-    lw   t3, 0(t0)          /* t3 = N */
+    /* N = total elements */
+    lui  t5, 0x80000
+    addi t5, t5, 0x30
+    lw   t3, 0(t5)
 
-    /* global_id = blockIdx.x * 256 + threadIdx.x */
-    addi t4, zero, 256
-    mul  t2, t2, t4
-    add  t4, t2, t1         /* t4 = global_id */
+    /* my global index is in t1[lane] */
+    bge  t1, t3, exit         /* per-lane boundary check */
 
-    /* 边界检查 */
-    bge  t4, t3, exit
+    /* my_x = x[global_id] */
+    slli t2, t1, 2
+    lui  t4, 0x100
+    add  t2, t4, t2
+    flw  f0, 0(t2)
+    fexp.s f0, f0
 
-    /* 加载 x[global_id]，计算 my_exp = e^{x_i} */
-    slli t0, t4, 2
-    lui  t1, 0x100
-    add  t0, t1, t0
-    flw  f0, 0(t0)          /* f0 = x_i */
-    .word 0x60000053        /* fexp.s f0, f0    f0 = my_exp */
-
-    /* 初始化 sum = 0.0 */
-    fcvt.s.w f1, zero       /* f1 = sum */
-
-    /* j = 0 */
-    addi t0, zero, 0        /* t0 = j */
+    /* sum = 0, k = warp_base */
+    fcvt.s.w f1, zero
+    addi t6, zero, 4
 
 loop:
-    bge  t0, t3, done       /* j >= N */
+    bge  t0, t3, done
 
-    /* 加载 x[j] */
-    slli t1, t0, 2
-    lui  t2, 0x100
-    add  t1, t2, t1
-    flw  f2, 0(t1)          /* f2 = x[j] */
+    slli t2, t0, 2
+    lui  t4, 0x100
+    add  t2, t4, t2
+    vld.v v0, (t2), t6
 
-    /* sum += e^{x[j]} */
-    .word 0x60010153        /* fexp.s f2, f2 */
+    vfexp.v v0, v0
+    vredsum.v f2, v0
     fadd.s f1, f1, f2
 
-    /* j++ */
-    addi t0, t0, 1
+    addi t0, t0, 32
     j    loop
 
 done:
-    /* softmax = my_exp / sum */
     fdiv.s f0, f0, f1
-
-    /* 存储到 0x200000 */
-    slli t0, t4, 2
-    lui  t1, 0x200
-    add  t0, t1, t0
-    fsw  f0, 0(t0)
+    slli t2, t1, 2
+    lui  t4, 0x200
+    add  t2, t4, t2
+    fsw  f0, 0(t2)
 
 exit:
     ebreak

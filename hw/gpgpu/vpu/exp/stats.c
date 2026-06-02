@@ -7,6 +7,8 @@
 #include "state.h"
 #include "stats.h"
 #include "../core/utils.h"
+#include "../core/table.h"
+#include "memory.h" /* DLOG */
 
 /* color shortcuts */
 #define KNRM COLOR_RESET
@@ -38,8 +40,8 @@ void stats_snapshot(const GPGPUState *s, const char *name, double us, uint64_t f
     e->warps = s->stats.total_warps;
     e->bytes_r = s->stats.bytes_read;
     e->bytes_w = s->stats.bytes_write;
-    memcpy(e->cat, s->stats.cat, sizeof(e->cat));
-    memcpy(e->cat_static, s->stats.cat_static, sizeof(e->cat_static));
+    memcpy(e->cat, s->stats.cat, 10 * sizeof(uint64_t));
+    memcpy(e->cat_static, s->stats.cat_static, 10 * sizeof(uint64_t));
     e->branches = s->stats.total_branches;
     e->diverges = s->stats.simt_diverges;
     e->cache_hits = s->stats.cache_hits;
@@ -48,6 +50,8 @@ void stats_snapshot(const GPGPUState *s, const char *name, double us, uint64_t f
     e->coal_total = s->stats.coal_total;
     e->bench = bench;
     e->pass = pass;
+    DLOG(s, "[debug] snapshot %s: us=%.0f warps=%lu r=%lu w=%lu\n", name, us, (unsigned long)s->stats.total_warps,
+         (unsigned long)s->stats.bytes_read, (unsigned long)s->stats.bytes_write);
 }
 
 /* --- formatting helpers (caller provides buffer) --- */
@@ -62,19 +66,20 @@ static char *fmt_n(char *buf, size_t sz, double v)
     return buf;
 }
 
-static char *fmt_mix(char *buf, size_t sz, const uint64_t cat[4])
+static char *fmt_mix(char *buf, size_t sz, const uint64_t cat[10])
 {
+    static const char *cn[10] = {"ALU", "FP ", "MEM", "BR ", "SYS", "VPU", "TCU", "LP ", "SCI", "?"};
     uint64_t tot = 0;
-    for (int i = 0; i < 4; i++)
+    for (int i = 0; i < 10; i++)
         tot += cat[i];
     if (tot == 0) {
         buf[0] = '\0';
         return buf;
     }
-    static const char *cn[] = {"ALU", "FP ", "MEM", "BR "};
-    /* fixed: 4×(4+3) = 28 chars, always all four */
-    snprintf(buf, sz, "%s%2.0f%% %s%2.0f%% %s%2.0f%% %s%2.0f%%", cn[0], 100.0 * cat[0] / tot, cn[1],
-             100.0 * cat[1] / tot, cn[2], 100.0 * cat[2] / tot, cn[3], 100.0 * cat[3] / tot);
+    int off = 0;
+    /* show ALU/FP/MEM/BR always, others only if >0 */
+    for (int i = 0; i < 10; i++)
+        if (cat[i] || i < 4) off += snprintf(buf + off, sz - off, "%s%2.0f%% ", cn[i], 100.0 * cat[i] / tot);
     return buf;
 }
 
@@ -91,7 +96,7 @@ void stats_render(void)
         if (e->bench && e->flops) has_perf = true;
         if (e->bytes_r + e->bytes_w > 0) has_bw = true;
         uint64_t mt = 0;
-        for (int c = 0; c < 4; c++)
+        for (int c = 0; c < 10; c++)
             mt += e->cat[c] + e->cat_static[c];
         if (mt > 0) has_mix = true;
         if (e->branches > 0) has_div = true;
@@ -99,88 +104,104 @@ void stats_render(void)
         if (e->coal_total > 0) has_coal = true;
     }
 
-    int name_w = 5;
-    for (int i = 0; i < n_entries; i++) {
-        int w = (int)strlen(entries[i].name);
-        if (w > name_w) name_w = w;
-    }
+    /* build column definitions */
+    ColDef cols[TABLE_MAX_COLS];
+    int nc = 0;
+    cols[nc++] = (ColDef){.header = "name", .width = 0, .right = false, .color = -1};
+    cols[nc++] = (ColDef){.header = "time", .width = 0, .right = true, .color = -1};
+    if (has_perf) cols[nc++] = (ColDef){.header = "perf", .width = 0, .right = true, .color = -1};
+    cols[nc++] = (ColDef){.header = "warps", .width = 0, .right = true, .color = -1};
+    if (has_bw) cols[nc++] = (ColDef){.header = "bandwidth", .width = 0, .right = false, .color = -1};
+    if (has_mix) cols[nc++] = (ColDef){.header = "mix", .width = 0, .right = false, .color = -1};
+    if (has_div) cols[nc++] = (ColDef){.header = "div", .width = 0, .right = false, .color = -1};
+    if (has_cache) cols[nc++] = (ColDef){.header = "cache", .width = 0, .right = true, .color = -1};
+    if (has_coal) cols[nc++] = (ColDef){.header = "coalesc", .width = 0, .right = true, .color = -1};
+    cols[nc++] = (ColDef){.header = "", .width = 0, .right = false, .color = -1};
 
-    /* header */
-    printf("  " KBLD "%-*s %8s" KNRM, name_w, "name", "time");
-    if (has_perf) printf(" %6s", "perf");
-    printf(" %6s", "warps");
-    if (has_bw) printf("  %-26s", "bandwidth");
-    if (has_mix) printf("  %-28s", "mix");
-    if (has_div) printf(" %-12s", "div");
-    if (has_cache) printf(" %7s", "cache");
-    if (has_coal) printf(" %7s", "coalesc");
-    printf(" %s\n", "");
+    Table t;
+    table_init(&t, cols, nc);
 
-    printf("  " KDIM "%-*s %8s", name_w, "----", "------");
-    if (has_perf) printf(" %6s", "-----");
-    printf(" %6s", "-----");
-    if (has_bw) printf("  %-26s", "--------------------------");
-    if (has_mix) printf("  %-28s", "----------------------------");
-    if (has_div) printf(" %-12s", "------------");
-    if (has_cache) printf(" %7s", "-------");
-    if (has_coal) printf(" %7s", "-------");
-    printf(" %s\n" KNRM, "----");
-
-    /* rows */
     for (int i = 0; i < n_entries; i++) {
         StatsEntry *e = &entries[i];
-        printf("  " KBLD "%-*s" KNRM " %7.0fus", name_w, e->name, e->us);
+        char *row[TABLE_MAX_COLS];
+        char tmp[16][64]; /* scratch buffers */
+        int bi = 0;       /* buffer index */
+        int ci = 0;
+
+        row[ci++] = (char *)e->name;
+
+        snprintf(tmp[bi], sizeof(tmp[bi]), "%.0fus", e->us);
+        row[ci++] = tmp[bi];
+        bi++;
+
         if (has_perf) {
             if (e->bench && e->flops && e->us > 0)
-                printf(" " KMAG "%5.0fM" KNRM, e->flops / e->us);
+                snprintf(tmp[bi], sizeof(tmp[bi]), KMAG "%.0fM" KNRM, e->flops / e->us);
             else
-                printf(" %6s", "");
+                tmp[bi][0] = '\0';
+            row[ci++] = tmp[bi];
+            bi++;
         }
-        printf(" %5luw", (unsigned long)e->warps);
+
+        snprintf(tmp[bi], sizeof(tmp[bi]), "%luw", (unsigned long)e->warps);
+        row[ci++] = tmp[bi];
+        bi++;
 
         if (has_bw) {
             if (e->bytes_r + e->bytes_w > 0) {
                 char rn[16], wn[16];
                 double b = (e->bytes_r + e->bytes_w) / e->us;
-                printf("  " KBLU "r:" KNRM "%s " KBLU "w:" KNRM "%s %6.0fM/s", fmt_n(rn, sizeof(rn), e->bytes_r),
-                       fmt_n(wn, sizeof(wn), e->bytes_w), b);
-            } else {
-                printf("  %26s", "");
-            }
+                snprintf(tmp[bi], sizeof(tmp[bi]), KBLU "r:" KNRM "%s " KBLU "w:" KNRM "%s %.0fM/s",
+                         fmt_n(rn, sizeof(rn), e->bytes_r), fmt_n(wn, sizeof(wn), e->bytes_w), b);
+            } else
+                tmp[bi][0] = '\0';
+            row[ci++] = tmp[bi];
+            bi++;
         }
 
         if (has_mix) {
-            char mx[64], tag[16];
-            uint64_t td = e->cat[0] + e->cat[1] + e->cat[2] + e->cat[3];
-            bool is_dyn = td > 0;
-            fmt_mix(mx, sizeof(mx), is_dyn ? e->cat : e->cat_static);
-            snprintf(tag, sizeof(tag), "%s%s", is_dyn ? KCYN "d" KNRM : KDIM "s" KNRM, is_dyn ? "yn " : "t ");
-            printf("  %s%s", tag, mx);
+            char mx[128];
+            uint64_t td = 0;
+            for (int c = 0; c < 10; c++)
+                td += e->cat[c];
+            fmt_mix(mx, sizeof(mx), td ? e->cat : e->cat_static);
+            snprintf(tmp[bi], sizeof(tmp[bi]), "%s%s %s", td ? KCYN "dyn" KNRM : KDIM "static" KNRM, "", mx);
+            row[ci++] = tmp[bi];
+            bi++;
         }
 
         if (has_div) {
             if (e->branches > 0 && e->diverges > 0)
-                printf(" " KRED "%lu/%lu(%.0f%%)" KNRM, (unsigned long)e->diverges, (unsigned long)e->branches,
-                       100.0 * e->diverges / e->branches);
+                snprintf(tmp[bi], sizeof(tmp[bi]), KRED "%lu/%lu(%.0f%%)" KNRM, (unsigned long)e->diverges,
+                         (unsigned long)e->branches, 100.0 * e->diverges / e->branches);
             else
-                printf("  %8s", "");
+                tmp[bi][0] = '\0';
+            row[ci++] = tmp[bi];
+            bi++;
         }
 
         if (has_cache) {
             uint64_t tot = e->cache_hits + e->cache_misses;
             if (tot > 0)
-                printf(" %6.0f%%", 100.0 * e->cache_hits / tot);
+                snprintf(tmp[bi], sizeof(tmp[bi]), "%.0f%%", 100.0 * e->cache_hits / tot);
             else
-                printf(" %7s", "");
+                tmp[bi][0] = '\0';
+            row[ci++] = tmp[bi];
+            bi++;
         }
 
         if (has_coal) {
             if (e->coal_total > 0)
-                printf(" %6.0f%%", 100.0 * e->coal_ops / e->coal_total);
+                snprintf(tmp[bi], sizeof(tmp[bi]), "%.0f%%", 100.0 * e->coal_ops / e->coal_total);
             else
-                printf(" %7s", "");
+                tmp[bi][0] = '\0';
+            row[ci++] = tmp[bi];
+            bi++;
         }
 
-        printf("  %s%s%s\n", e->pass ? KGRN : KRED, e->pass ? " PASS" : " FAIL", KNRM);
+        row[ci++] = e->pass ? KGRN "PASS" KNRM : KRED "FAIL" KNRM;
+        table_row(&t, (const char **)row);
     }
+
+    table_render(&t);
 }

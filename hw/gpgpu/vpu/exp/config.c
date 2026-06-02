@@ -37,7 +37,7 @@ void vpu_config_default(vpu_config_t *c)
             .warp_size = 32,
             .vram_mb = 64,
             .features =
-                    {.vpu = true, .tcu = false, .sfu = true, .lp = true, .debug = false, .trace = false, .perf = true},
+                    {.vpu = true, .tcu = true, .sfu = true, .lp = true, .debug = false, .trace = false, .perf = true},
     };
 }
 

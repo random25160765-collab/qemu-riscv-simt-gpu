@@ -178,9 +178,10 @@ int fuzzer_run(GPGPUState *s, uint32_t seed, int rounds, int verbose)
         EngineContext cb_ = {.s = s, .active = 0x1, .thread_id = {0, 0, 0}, .block_id = {0, 0, 0}};
         SIMTFrame sa[32], sb[32];
         int da = 0, db = 0;
+        float mma_a[8 * 32] = {0}, mma_b[8 * 32] = {0};
 
-        int ra = engine_exec(code, tc, &ca_, ga, fa, pa, ma, ca, sa, &da, -1);
-        int rb = engine_exec(code, tc, &cb_, gb, fb, pb, mb, cb, sb, &db, -1);
+        int ra = engine_exec(code, tc, &ca_, ga, fa, pa, ma, ca, sa, &da, -1, mma_a);
+        int rb = engine_exec(code, tc, &cb_, gb, fb, pb, mb, cb, sb, &db, -1, mma_b);
         if (ra != 0 || rb != 0) {
             err++;
             goto nxt;
@@ -251,6 +252,7 @@ int fuzzer_replay(GPGPUState *s, const char *hex_list, int verbose)
     EngineContext cb_ = {.s = s, .active = 0x1, .thread_id = {0, 0, 0}, .block_id = {0, 0, 0}};
     SIMTFrame sa[32], sb[32];
     int da = 0, db = 0;
+    float mma_a[8 * 32] = {0}, mma_b[8 * 32] = {0};
 
     if (verbose) {
         fprintf(stderr, "REPLAY %d insts:", ni);
@@ -278,7 +280,7 @@ int fuzzer_replay(GPGPUState *s, const char *hex_list, int verbose)
             SIMTFrame sstk[32];
             int ssd = 0;
 
-            int r = engine_exec(sub, tc, &ca_, sg, sf, sp, sm, sc, sstk, &ssd, -1);
+            int r = engine_exec(sub, tc, &ca_, sg, sf, sp, sm, sc, sstk, &ssd, -1, ma);
             fprintf(stderr, "  [%d] 0x%08x %s r=%d", end, raw[end], r == 0 ? "OK" : (r == -1 ? "ILLEGAL" : "CRASH?"),
                     r);
             if (r == 0) {
@@ -292,8 +294,8 @@ int fuzzer_replay(GPGPUState *s, const char *hex_list, int verbose)
         return 0;
     }
 
-    int ra = engine_exec(code, tc, &ca_, ga, fa, pa, ma, ca, sa, &da, -1);
-    int rb = engine_exec(code, tc, &cb_, gb, fb, pb, mb, cb, sb, &db, -1);
+    int ra = engine_exec(code, tc, &ca_, ga, fa, pa, ma, ca, sa, &da, -1, ma);
+    int rb = engine_exec(code, tc, &cb_, gb, fb, pb, mb, cb, sb, &db, -1, mb);
     free(code);
 
     /* x0 check */

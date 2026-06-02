@@ -13,7 +13,18 @@
  * ThOp — 预译码指令
  * ============================================================ */
 /* 指令分类 (cat field), 用于指令 mix 统计 */
-enum { CAT_ALU = 0, CAT_FP = 1, CAT_MEM = 2, CAT_BR = 3, CAT_SYS = 4, CAT_SCI = 5, CAT_LP = 6, CAT_MAX = 8 };
+enum {
+    CAT_ALU = 0,
+    CAT_FP = 1,
+    CAT_MEM = 2,
+    CAT_BR = 3,
+    CAT_SYS = 4,
+    CAT_VPU = 5,
+    CAT_TCU = 6,
+    CAT_LP = 7,
+    CAT_SCI = 8,
+    CAT_MAX = 10
+};
 
 typedef struct {
     void *handler;

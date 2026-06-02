@@ -59,7 +59,8 @@ typedef struct {
  *   -1 = 非法指令
  */
 int engine_exec(ThOp *code, int tcount, const EngineContext *ctx, uint32_t gpr[32 * 32], uint32_t fpr[32 * 32],
-                uint32_t pc[32], uint32_t mhartid[32], uint32_t fcsr[32], SIMTFrame *_stk, int *_sdepth, int resume_pc);
+                uint32_t pc[32], uint32_t mhartid[32], uint32_t fcsr[32], SIMTFrame *_stk, int *_sdepth, int resume_pc,
+                float mma_acc[8 * 32]);
 
 /*
  * ============================================================================

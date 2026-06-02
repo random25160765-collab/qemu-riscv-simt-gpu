@@ -14,6 +14,7 @@
 #include "stats.h"
 #include "test_runner.h"
 #include "../core/utils.h"
+#include "memory.h" /* DLOG */
 
 #define KERN_ADDR 0x500000
 #define MAX_TESTS 64
@@ -57,6 +58,10 @@ void load_kernel(const char *path, GPGPUState *s, uint32_t addr)
         memcpy(s->vram_ptr + addr, buf, sz);
         free(buf);
         s->kern_size = (uint32_t)sz;
+    } else {
+        memset(s->vram_ptr + addr, 0, 4096);
+        s->kern_size = 0;
+        fprintf(stderr, "FATAL: cannot load %s\n", path);
     }
 }
 
@@ -71,7 +76,12 @@ static int run_one(GPGPUState *s, TestCase *t)
     s->kernel.kernel_addr = KERN_ADDR;
     memcpy(s->kernel.grid_dim, t->grid, sizeof(t->grid));
     memcpy(s->kernel.block_dim, t->block, sizeof(t->block));
-    if (t->kernel) load_kernel(t->kernel, s, KERN_ADDR);
+    if (t->kernel) {
+        load_kernel(t->kernel, s, KERN_ADDR);
+        DLOG(s, "[debug] load_kernel(%s) → kern_size=%u\n", t->kernel, s->kern_size);
+    }
+    DLOG(s, "[debug] %s: grid=%u,%u,%u block=%u,%u,%u\n", t->name, t->grid[0], t->grid[1], t->grid[2], t->block[0],
+         t->block[1], t->block[2]);
     struct timespec T0, T1;
     clock_gettime(CLOCK_MONOTONIC, &T0);
     int ret = scheduler_run_kernel(s);

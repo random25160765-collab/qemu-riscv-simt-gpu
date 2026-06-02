@@ -107,12 +107,22 @@ typedef struct GPGPUState {
     /* SIMT 执行上下文 */
     GPGPUSIMTContext simt;
 
+    /* TCU MMA 状态 */
+    struct {
+        uint32_t M, K, N;  /* 矩阵维度 */
+        uint32_t a_base;   /* A 矩阵 VRAM 基址 */
+        uint32_t b_base;   /* B 矩阵 VRAM 基址 */
+        uint32_t c_base;   /* C 矩阵 VRAM 基址 */
+        uint32_t fmt_in;   /* 输入精度: 0=fp32,1=fp16,2=bf16,3=int8 */
+        uint32_t fmt_out;  /* 输出精度 */
+    } mma;
+
     /* 性能统计 (per-kernel-launch, scheduler 清零) */
     struct {
         uint64_t total_warps;    /* 总 warp 数 (scheduler) */
         uint64_t kernel_ops;     /* 预译码指令条数 (scheduler) */
-        uint64_t cat[8];         /* 指令分类: 动态 (engine NEXT, perf=1) */
-        uint64_t cat_static[8];  /* 指令分类: 静态 (scheduler 离线) */
+        uint64_t cat[10];        /* 指令分类: 动态 (engine NEXT, perf=1) */
+        uint64_t cat_static[10]; /* 指令分类: 静态 (scheduler 离线) */
         uint64_t total_branches; /* 总分支数 (engine DIV_BR) */
         uint64_t simt_diverges;  /* 分歧分支数 (engine DIV_BR) */
         uint64_t bytes_read;     /* VRAM 读 (engine load handlers) */

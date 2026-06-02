@@ -9,6 +9,7 @@
  */
 
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
@@ -84,7 +85,10 @@ static inline uint32_t ctrl_read(const EngineContext *ctx, uint32_t addr, int la
 #define NUM_OF_INST 300
 static void *dispatch[NUM_OF_INST];
 static volatile int dispatch_ready = 0;
-static int perf_enabled = -1; /* -1=unset, 从 config 首次读 */
+/* perf_enabled: 首次 engine_exec 时从 s->cfg.features.perf 读取。
+ * static 变量, 程序生命周期内不变。
+ * Makefile 中 engine.o 依赖 gpu_config.lua — 改 perf 后 make 自动重编。 */
+static int perf_enabled = -1;
 
 /* 热路径计数器包装: 分支预测 100% 命中 ≈ 零开销 */
 #define PERF_IF(x)      \
@@ -119,7 +123,7 @@ void engine_resolve_handlers(ThOp *code, int tcount)
  * ============================================================ */
 int engine_exec(ThOp *code, int tcount, const EngineContext *ctx, uint32_t gpr[32 * 32], uint32_t fpr[32 * 32],
                 uint32_t _pc[32], uint32_t _mhartid[32], uint32_t _fcsr[32], SIMTFrame *_stk_ext, int *_sdepth_ext,
-                int resume_pc)
+                int resume_pc, float _mma_acc[8 * 32])
 {
     ThOp *ip;
     uint32_t _active = ctx->active;
@@ -168,6 +172,24 @@ int engine_exec(ThOp *code, int tcount, const EngineContext *ctx, uint32_t gpr[3
                 void *h = dispatch[_j];
                 if (h == &&op_fcvt_s_bf16 || h == &&op_fcvt_bf16_s || h == &&op_fcvt_s_e4m3 || h == &&op_fcvt_e4m3_s ||
                     h == &&op_fcvt_s_e5m2 || h == &&op_fcvt_e5m2_s || h == &&op_fcvt_s_e2m1 || h == &&op_fcvt_e2m1_s)
+                    dispatch[_j] = &&op_illegal;
+            }
+        }
+        if (!s->cfg.features.vpu) {
+            for (int _j = 0; _j < NUM_OF_INST; _j++) {
+                void *h = dispatch[_j];
+                if (h == &&op_vld_v || h == &&op_vst_v || h == &&op_vfadd_v || h == &&op_vfsub_v || h == &&op_vfmul_v ||
+                    h == &&op_vfdiv_v || h == &&op_vffma_v || h == &&op_vfmul_vs || h == &&op_vfadd_vs ||
+                    h == &&op_vfdiv_vs || h == &&op_vfexp_v || h == &&op_vfsig_v || h == &&op_vftanh_v ||
+                    h == &&op_vfsqrt_v || h == &&op_vredsum_v || h == &&op_vredmax_v)
+                    dispatch[_j] = &&op_illegal;
+            }
+        }
+        if (!s->cfg.features.tcu) {
+            for (int _j = 0; _j < NUM_OF_INST; _j++) {
+                void *h = dispatch[_j];
+                if (h == &&op_mma_cfg || h == &&op_mma_s || h == &&op_mma_zero || h == &&op_mma_ld ||
+                    h == &&op_mma_st || h == &&op_mma_relu || h == &&op_mma_bias)
                     dispatch[_j] = &&op_illegal;
             }
         }
@@ -640,12 +662,19 @@ op_remu: {
 /* ============================================================
      * VPU 向量指令 — warp 级 SIMD (custom-1 opcode 0x2B)
      * ============================================================ */
+#define VPU_TRACE 0
+#if VPU_TRACE
+#define VTRACE(fmt, ...) fprintf(stderr, "[VPU] " fmt, ##__VA_ARGS__)
+#else
+#define VTRACE(fmt, ...) ((void)0)
+#endif
 op_vld_v: {
     int vd = ip[-1].rd, rs1 = ip[-1].rs1, rs2 = ip[-1].rs2;
+    VTRACE("vld_v  v%d, (0x%x), r%d  active=0x%x\n", vd - 16, GPR(rs1, 0), rs2, _active);
     FOR_EACH_LANE
     {
         uint32_t a = GPR(rs1, _li) + _li * GPR(rs2, _li);
-        FPR(vd, _li) = *(uint32_t *)(s->vram_ptr + a);
+        FPR(vd, _li) = (a + 4 <= s->vram_size) ? *(uint32_t *)(s->vram_ptr + a) : 0;
         PC(_li) += 4;
     }
     PERF_IF(s->stats.bytes_read += __builtin_popcount(_active) * 4;)
@@ -653,10 +682,12 @@ op_vld_v: {
 }
 op_vst_v: {
     int rs1 = ip[-1].rs1, rs2 = ip[-1].rs2, vs3 = ip[-1].rd;
+    VTRACE("vst_v  vs3=%d a=0x%x r%d  v2[0]=%.3f C[0]=%.3f\n", vs3, GPR(rs1, 0), rs2, FR(vs3, 0),
+           *(float *)(s->vram_ptr + GPR(rs1, 0)));
     FOR_EACH_LANE
     {
         uint32_t a = GPR(rs1, _li) + _li * GPR(rs2, _li);
-        *(uint32_t *)(s->vram_ptr + a) = FPR(vs3, _li);
+        if (a + 4 <= s->vram_size) *(uint32_t *)(s->vram_ptr + a) = FPR(vs3, _li);
         PC(_li) += 4;
     }
     PERF_IF(s->stats.bytes_write += __builtin_popcount(_active) * 4;)
@@ -674,19 +705,31 @@ op_vst_v: {
         NEXT();                                                 \
     }
     VFALU(vfadd_v, +)
-    VFALU(vfsub_v, -) VFALU(vfmul_v, *) VFALU(vfdiv_v, /)
+    VFALU(vfsub_v, -)
+    VFALU(vfdiv_v, /)
 #undef VFALU
 
-            op_vffma_v:
+op_vfmul_v: {
+    int vd = ip[-1].rd, vs1 = ip[-1].rs1, vs2 = ip[-1].rs2;
+    VTRACE("vfmul_v vd=%d vs1=%d vs2=%d  v0=%.3f v1=%.3f\n", vd, vs1, vs2, FR(vs1, 0), FR(vs2, 0));
+    FOR_EACH_LANE
     {
-        int vd = ip[-1].rd, vs1 = ip[-1].rs1, vs2 = ip[-1].rs2;
-        FOR_EACH_LANE
-        {
-            FR(vd, _li) += FR(vs1, _li) * FR(vs2, _li);
-            PC(_li) += 4;
-        }
-        NEXT();
+        FR(vd, _li) = FR(vs1, _li) * FR(vs2, _li);
+        PC(_li) += 4;
     }
+    VTRACE("vfmul_v result v2[0]=%.3f v2[1]=%.3f\n", FR(vd, 0), FR(vd, 1));
+    NEXT();
+}
+
+op_vffma_v: {
+    int vd = ip[-1].rd, vs1 = ip[-1].rs1, vs2 = ip[-1].rs2;
+    FOR_EACH_LANE
+    {
+        FR(vd, _li) += FR(vs1, _li) * FR(vs2, _li);
+        PC(_li) += 4;
+    }
+    NEXT();
+}
 #define VFALUS(name, op)                      \
     op_##name:                                \
     {                                         \
@@ -700,7 +743,8 @@ op_vst_v: {
         NEXT();                               \
     }
     VFALUS(vfmul_vs, *)
-    VFALUS(vfadd_vs, +) VFALUS(vfdiv_vs, /)
+    VFALUS(vfadd_vs, +)
+    VFALUS(vfdiv_vs, /)
 #undef VFALUS
 
 #define VFUNA(name, expr)                     \
@@ -715,31 +759,102 @@ op_vst_v: {
         }                                     \
         NEXT();                               \
     }
-            VFUNA(vfexp_v, fastexp(v)) VFUNA(vfsig_v, fastsigmoid(v)) VFUNA(vftanh_v, fasttanh(v))
-                    VFUNA(vfsqrt_v, sqrtf(v))
+    VFUNA(vfexp_v, fastexp(v))
+    VFUNA(vfsig_v, fastsigmoid(v))
+    VFUNA(vftanh_v, fasttanh(v))
+    VFUNA(vfsqrt_v, sqrtf(v))
 #undef VFUNA
 
-                            op_vredsum_v:
-    {
-        int rd = ip[-1].rd, vs1 = ip[-1].rs1;
-        float sum = 0;
-        FOR_EACH_LANE
-        {
-            sum += FR(vs1, _li);
-            PC(_li) += 4;
-        }
-        FR(rd, 0) = sum;
-        NEXT();
-    }
-op_vredmax_v: {
+op_vredsum_v: {
     int rd = ip[-1].rd, vs1 = ip[-1].rs1;
-    float mx = -INFINITY;
+    float sum = 0;
     FOR_EACH_LANE
     {
-        if (FR(vs1, _li) > mx) mx = FR(vs1, _li);
+        sum += FR(vs1, _li);
+        PC(_li) += 4;
+    }
+    FR(rd, 0) = sum;
+    NEXT();
+}
+op_vredmax_v: {
+    int rd = ip[-1].rd, vs1 = ip[-1].rs1;
+    float mx = NAN;
+    FOR_EACH_LANE
+    {
+        if (isnan(mx) || FR(vs1, _li) > mx) mx = FR(vs1, _li);
         PC(_li) += 4;
     }
     FR(rd, 0) = mx;
+    NEXT();
+}
+
+/* ============================================================
+     * TCU 矩阵指令 — warp-MMA (custom-1 opcode 0x2B, funct3=111)
+     * ============================================================ */
+op_mma_cfg: {
+    int rd = ip[-1].rd, rs1 = ip[-1].rs1, rs2 = ip[-1].rs2;
+    s->mma.M = GPR(rd, 0);
+    s->mma.K = GPR(rs1, 0);
+    s->mma.N = GPR(rs2, 0) & 0xFF;
+    s->mma.fmt_in = (GPR(rs2, 0) >> 10) & 3;
+    s->mma.fmt_out = (GPR(rs2, 0) >> 8) & 3;
+    FOR_EACH_LANE PC(_li) += 4;
+    NEXT();
+}
+static int _tcu_kcount[8];
+op_mma_zero: {
+    int acc = ip[-1].rd;
+    _tcu_kcount[acc] = 0;
+    memset(&_mma_acc[acc * 32], 0, 128);
+    FOR_EACH_LANE PC(_li) += 4;
+    NEXT();
+}
+op_mma_ld: {
+    int acc = ip[-1].rd, base = ip[-1].rs1, stride = ip[-1].rs2;
+    if (acc >= 8) return -1;
+    FOR_EACH_LANE {
+        uint32_t a = GPR(base, _li) + _li * GPR(stride, _li);
+        if (a + 4 <= s->vram_size) _mma_acc[acc * 32 + _li] = *(float *)(s->vram_ptr + a);
+        PC(_li) += 4;
+    }
+    NEXT();
+}
+op_mma_s: {
+    int acc = ip[-1].rd, vs1 = ip[-1].rs1, fs2 = ip[-1].rs2;
+    if (acc >= 8) return -1;
+    float ak = FR(fs2, 0);
+    _tcu_kcount[acc]++;
+    FOR_EACH_LANE { _mma_acc[acc * 32 + _li] += FR(vs1, _li) * ak; PC(_li) += 4; }
+    NEXT();
+}
+op_mma_st: {
+    int acc = ip[-1].rd, base = ip[-1].rs1, stride = ip[-1].rs2;
+    if (acc >= 8) return -1;
+    FOR_EACH_LANE {
+        uint32_t a = GPR(base, _li) + _li * GPR(stride, _li);
+        if (a + 4 <= s->vram_size) *(float *)(s->vram_ptr + a) = _mma_acc[acc * 32 + _li];
+        PC(_li) += 4;
+    }
+    NEXT();
+}
+op_mma_relu: {
+    int acc = ip[-1].rd;
+    if (acc >= 8) return -1;
+    FOR_EACH_LANE {
+        float v = _mma_acc[acc * 32 + _li];
+        _mma_acc[acc * 32 + _li] = v > 0 ? v : 0;
+        PC(_li) += 4;
+    }
+    NEXT();
+}
+op_mma_bias: {
+    int acc = ip[-1].rd, base = ip[-1].rs1, stride = ip[-1].rs2;
+    if (acc >= 8) return -1;
+    FOR_EACH_LANE {
+        uint32_t a = GPR(base, _li) + _li * GPR(stride, _li);
+        if (a + 4 <= s->vram_size) _mma_acc[acc * 32 + _li] += *(float *)(s->vram_ptr + a);
+        PC(_li) += 4;
+    }
     NEXT();
 }
 
@@ -1099,11 +1214,20 @@ op_fcvt_w_s: {
     {
         float f = FR(rs1, _li);
         uint32_t raw = FPR(rs1, _li);
-        GPR(rd, _li) = (uint32_t)(int32_t)(((raw >> 23) & 0xFF) == 0xFF && (raw & 0x7FFFFF)
-                                                   ? 0x7FFFFFFF
-                                                   : (f >= 2147483648.0f ? 0x7FFFFFFF
-                                                                         : (f < -2147483648.0f ? (int32_t)0x80000000
-                                                                                               : (int32_t)f)));
+        uint32_t e = (raw >> 23) & 0xFF;
+        /* NaN (exp=255, mant≠0) → 0x7FFFFFFF */
+        if (e == 0xFF && (raw & 0x7FFFFF))
+            GPR(rd, _li) = 0x7FFFFFFF;
+        /* subnormal (exp=0, mant≠0): |f| < 2^-126, rounds to 0 */
+        else if (e == 0 && (raw & 0x7FFFFF))
+            GPR(rd, _li) = 0;
+        /* overflow */
+        else if (f >= 2147483648.0f)
+            GPR(rd, _li) = 0x7FFFFFFF;
+        else if (f < -2147483648.0f)
+            GPR(rd, _li) = (uint32_t)(int32_t)0x80000000;
+        else
+            GPR(rd, _li) = (uint32_t)(int32_t)f;
         PC(_li) += 4;
     }
     NEXT();
@@ -1114,9 +1238,18 @@ op_fcvt_wu_s: {
     {
         float f = FR(rs1, _li);
         uint32_t raw = FPR(rs1, _li);
-        GPR(rd, _li) = ((raw >> 23) & 0xFF) == 0xFF && (raw & 0x7FFFFF)
-                               ? 0xFFFFFFFF
-                               : (f < 0.0f ? 0 : (f >= 4294967296.0f ? 0xFFFFFFFF : (uint32_t)f));
+        uint32_t e = (raw >> 23) & 0xFF;
+        /* NaN → 0xFFFFFFFF */
+        if (e == 0xFF && (raw & 0x7FFFFF))
+            GPR(rd, _li) = 0xFFFFFFFF;
+        /* subnormal or negative → 0 */
+        else if ((e == 0 && (raw & 0x7FFFFF)) || f < 0.0f)
+            GPR(rd, _li) = 0;
+        /* overflow → 0xFFFFFFFF */
+        else if (f >= 4294967296.0f)
+            GPR(rd, _li) = 0xFFFFFFFF;
+        else
+            GPR(rd, _li) = (uint32_t)f;
         PC(_li) += 4;
     }
     NEXT();

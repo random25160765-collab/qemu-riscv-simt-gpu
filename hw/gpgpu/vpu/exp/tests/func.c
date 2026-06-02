@@ -262,6 +262,38 @@ static int c_conv(GPGPUState *s)
     return fabsf(((float *)(s->vram_ptr + 0x300000))[0] - 6.0f) > 1e-4f;
 }
 
+/* --- VPU vecmul: 32 elements, one warp --- */
+static void s_vpu_vm(GPGPUState *s)
+{
+    for (int i = 0; i < 32; i++) {
+        ((float *)(s->vram_ptr + 0x100000))[i] = (float)(i + 1);
+        ((float *)(s->vram_ptr + 0x200000))[i] = 2.0f;
+    }
+}
+static int c_vpu_vm(GPGPUState *s)
+{
+    for (int i = 0; i < 32; i++)
+        if (fabsf(((float *)(s->vram_ptr + 0x300000))[i] - (float)(i + 1) * 2.0f) > 1e-5f) return 1;
+    return 0;
+}
+
+/* --- TCU single-warp matmul: M=1,K=4,N=32 --- */
+static void s_mma_f(GPGPUState *s)
+{
+    *(uint32_t *)s->vram_ptr = 4; /* K */
+    for (int i = 0; i < 4; i++)
+        ((float *)(s->vram_ptr + 0x100000))[i] = 1.0f;
+    for (int i = 0; i < 4 * 32; i++)
+        ((float *)(s->vram_ptr + 0x200000))[i] = 1.0f;
+}
+static int c_mma_f(GPGPUState *s)
+{
+    float *C = (float *)(s->vram_ptr + 0x300000);
+    for (int i = 0; i < 32; i++)
+        if (fabsf(C[i] - 4.0f) > 1e-4f) return 1;
+    return 0;
+}
+
 /* --- registration --- */
 void func_tests_register(void)
 {
@@ -282,5 +314,9 @@ void func_tests_register(void)
     F("Softmax", "kernels/softmax.bin", 1, 1, 1, 64, 1, 1, s_smax, c_smax);
     F("SoftmaxNorm", "kernels/softmax_norm.bin", 1, 1, 1, 1, 1, 1, s_snorm, c_snorm);
     F("Conv2d", "kernels/conv2d.bin", 3, 3, 1, 2, 1, 1, s_conv, c_conv);
+    F("Vecmul VPU", "kernels/vecmul_vpu.bin", 1, 1, 1, 32, 1, 1, s_vpu_vm, c_vpu_vm);
+    /* TCU single-warp: M=1,K=4,N=32, all-ones → C=4 */
+    F("MMA 1x4x32", "kernels/matmul.bin", 1, 1, 1, 32, 1, 1, s_mma_f, c_mma_f);
+
 #undef F
 }

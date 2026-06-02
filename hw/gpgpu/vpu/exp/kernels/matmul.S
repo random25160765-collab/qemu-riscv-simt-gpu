@@ -1,83 +1,96 @@
 /*
- * 矩阵乘法 GPU Kernel (标准 CUDA grid/block 模式)
- * C = A * B  (M x K) * (K x N) = (M x N)
- *
- * 参数: K @ VRAM[0], A[M][K]@0x100000, B[K][N]@0x200000, C[M][N]@0x300000
- * grid_dim[0] = M, block_dim[0] = N
- * blockIdx.x = row, threadIdx.x = col
+ * matmul.S — TCU 矩阵乘法, K-loop 4x 展开 + 累加器
+ * mma.zero / mma.s / mma.st + vld.v
  */
 
 .section .text
 .globl _start
 
 _start:
-    /* 读取 K = VRAM[0] */
-    lw   t5, 0(zero)
+    lw   t5, 0(zero)            # K = VRAM[0]
 
-    /* threadIdx.x = col */
     lui  t0, 0x80000
-    lw   t1, 0(t0)
+    lw   t1, 0(t0)              # threadIdx.x
+    addi t0, zero, -32
+    and  t1, t1, t0             # col_start = threadIdx.x & ~31
 
-    /* blockIdx.x = row */
     lui  t0, 0x80000
     addi t0, t0, 0x10
-    lw   t2, 0(t0)
+    lw   t2, 0(t0)              # row = blockIdx.x
 
-    /* M = grid_dim[0] */
-    lui  t0, 0x80000
-    addi t0, t0, 0x30
-    lw   t3, 0(t0)
-
-    /* N = block_dim[0] */
     lui  t0, 0x80000
     addi t0, t0, 0x20
-    lw   t4, 0(t0)
+    lw   t4, 0(t0)              # N = blockDim.x
 
-    /* 边界检查 */
+    lui  t0, 0x80000
+    addi t0, t0, 0x30
+    lw   t3, 0(t0)              # M = gridDim.x
+
     bge  t2, t3, exit
     bge  t1, t4, exit
 
-    /* sum = 0.0 */
-    fcvt.s.w f0, zero
+    mma.zero acc0
 
-    /* k = 0 */
-    addi t6, zero, 0
-
-loop:
-    bge  t6, t5, done
-
-    /* A地址 = row*K + k */
     mul  a0, t2, t5
-    add  a0, a0, t6
     slli a0, a0, 2
-    lui  t0, 0x100
-    add  a0, a0, t0
+    lui  a3, 0x100
+    add  a0, a0, a3             # a0 = A[row][0]
 
-    /* B地址 = k*N + col */
-    mul  a1, t6, t4
-    add  a1, a1, t1
-    slli a1, a1, 2
-    lui  t0, 0x200
-    add  a1, a1, t0
+    addi a5, zero, 4            # stride = 4
+    slli a6, t4, 2              # a6 = N * 4
 
-    /* 乘加 */
-    flw  f1, 0(a0)
-    flw  f2, 0(a1)
-    fmadd.s f0, f1, f2, f0
+    slli a2, t1, 2
+    lui  a4, 0x200
+    add  a2, a2, a4             # a2 = B[k][col_start]
 
-    /* k++ */
-    addi t6, t6, 1
-    j    loop
+    andi t6, t5, -4             # K rounded down to 4
+    addi a7, zero, 0            # k counter
+
+kloop4:
+    bge  a7, t6, cleanup
+
+    flw  f0, 0(a0)
+    vld.v v1, (a2), a5
+    mma.s acc0, v1, f0
+
+    flw  f0, 4(a0)
+    add  a2, a2, a6
+    vld.v v1, (a2), a5
+    mma.s acc0, v1, f0
+
+    flw  f0, 8(a0)
+    add  a2, a2, a6
+    vld.v v1, (a2), a5
+    mma.s acc0, v1, f0
+
+    flw  f0, 12(a0)
+    add  a2, a2, a6
+    vld.v v1, (a2), a5
+    mma.s acc0, v1, f0
+
+    addi a0, a0, 16
+    add  a2, a2, a6
+    addi a7, a7, 4
+    j    kloop4
+
+cleanup:
+    bge  a7, t5, done
+    flw  f0, 0(a0)
+    vld.v v1, (a2), a5
+    mma.s acc0, v1, f0
+    addi a0, a0, 4
+    add  a2, a2, a6
+    addi a7, a7, 1
+    j    cleanup
 
 done:
-    /* C地址 = row*N + col */
-    mul  a0, t2, t4
-    add  a0, a0, t1
-    slli a0, a0, 2
+    mul  a2, t2, t4
+    add  a2, a2, t1
+    slli a2, a2, 2
     lui  t0, 0x300
-    add  a0, a0, t0
-
-    fsw  f0, 0(a0)
+    add  a2, a2, t0             # a2 = C[row][col_start]
+    addi a5, zero, 4
+    mma.st acc0, (a2), a5
 
 exit:
     ebreak

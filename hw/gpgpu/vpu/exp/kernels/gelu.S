@@ -1,60 +1,52 @@
 /*
- * gelu.S — 元素级 GELU 激活函数
- *   f(x) = x * sigmoid(1.702 * x)
- *
- * GELU 近似公式（GPT/BERT 等 Transformer 的标准实现）。
- * 注意：x * sigmoid(x) 是 SiLU/Swish，不是 GELU。
- *
- * 输入: N 个 float32 @ 0x100000
- * 输出: N 个 float32 @ 0x200000
- * 参数: grid_dim[0] = N
+ * gelu.S — VPU GELU: out[i] = x * sigmoid(1.702 * x)
+ * warp 级 SIMD: 每 warp 32 元素
  */
 
 .section .text
 .globl _start
 
 _start:
-    /* threadIdx.x */
     lui  t0, 0x80000
     lw   t1, 0(t0)
 
-    /* blockIdx.x */
-    lui  t0, 0x80000
-    addi t0, t0, 0x10
-    lw   t2, 0(t0)
+    addi t0, zero, -32
+    and  t1, t1, t0
 
-    /* N = grid_dim[0] */
     lui  t0, 0x80000
     addi t0, t0, 0x30
     lw   t3, 0(t0)
+    lui  t0, 0x80000
+    addi t0, t0, 0x20
+    lw   t2, 0(t0)
+    mul  t3, t3, t2
 
-    /* global_id = blockIdx.x * 256 + threadIdx.x */
-    addi t4, zero, 256
-    mul  t2, t2, t4
-    add  t4, t2, t1
+    bge  t1, t3, exit
+    slli t1, t1, 2
 
-    /* 边界检查 */
-    bge  t4, t3, exit
+    /* alpha = 1.702f = 0x3FD9CEDC */
+    lui  t5, 0x3FD9D
+    addi t5, t5, -292
+    fmv.w.x f0, t5
 
-    /* 加载输入 */
-    slli t0, t4, 2
-    lui  t1, 0x100
-    add  t0, t1, t0
-    flw  f0, 0(t0)          /* f0 = x */
+    addi t0, zero, 4
 
-    /* gelu(x) = x * sigmoid(1.702 * x) */
-    fsgnj.s f1, f0, f0      /* f1 = x (备份) */
-    li   t1, 0x3FD9D1A3     /* 1.702 的 IEEE 754 编码 */
-    fmv.w.x f2, t1           /* f2 = 1.702 */
-    fmul.s f0, f0, f2        /* f0 = 1.702 * x */
-    .word 0x60500053        /* fsigmoid.s f0, f0 */
-    fmul.s f0, f0, f1        /* f0 = x * sigmoid(1.702*x) */
+    /* v0 = x */
+    lui  t4, 0x100
+    add  t4, t4, t1
+    vld.v v0, (t4), t0
 
-    /* 存储结果 */
-    slli t0, t4, 2
-    lui  t1, 0x200
-    add  t0, t1, t0
-    fsw  f0, 0(t0)
+    /* v1 = 1.702 * x */
+    vfmul.vs v1, v0, f0
+    /* v1 = sigmoid(1.702*x) */
+    vfsig.v v1, v1
+    /* v0 = x * sigmoid(1.702*x) */
+    vfmul.v v0, v0, v1
+
+    /* store */
+    lui  t4, 0x200
+    add  t4, t4, t1
+    vst.v v0, (t4), t0
 
 exit:
     ebreak

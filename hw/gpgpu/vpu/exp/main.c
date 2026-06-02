@@ -8,6 +8,7 @@
 #include "state.h"
 #include "config.h"
 #include "test_runner.h"
+#include "utils.h"
 
 static void help(void)
 {
@@ -55,8 +56,13 @@ int main(int argc, char **argv)
         return 1;
     }
 
-    printf("VRAM: %lu MB | %u CU x %u warps/CU x %u lanes/warp\n\n", (unsigned long)(s.cfg.vram_mb), s.cfg.num_cus,
-           s.cfg.warps_per_cu, s.warp_size);
+    printf("VRAM: %lu MB | %u CU x %u warps/CU x %u lanes/warp\n"
+           "Features: perf=" STYLE_BOLD COLOR_MAGENTA "%s" COLOR_RESET " vpu=" COLOR_MAGENTA "%s" COLOR_RESET
+           " tcu=" COLOR_MAGENTA "%s" COLOR_RESET " sfu=" COLOR_MAGENTA "%s" COLOR_RESET " lp=" COLOR_MAGENTA
+           "%s" COLOR_RESET "\n\n",
+           (unsigned long)(s.cfg.vram_mb), s.cfg.num_cus, s.cfg.warps_per_cu, s.warp_size,
+           s.cfg.features.perf ? "on" : "off", s.cfg.features.vpu ? "on" : "off", s.cfg.features.tcu ? "on" : "off",
+           s.cfg.features.sfu ? "on" : "off", s.cfg.features.lp ? "on" : "off");
 
     int errors = 0;
     if (cmd && !strcmp(cmd, "native"))

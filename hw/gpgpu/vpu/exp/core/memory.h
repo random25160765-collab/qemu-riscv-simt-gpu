@@ -5,8 +5,15 @@
 #define MEMORY_H
 
 #include <stdint.h>
+#include <stdio.h>
 #include <string.h>
 #include "state.h"
+
+/* debug trace: gpu_config.lua debug=true 开启 */
+#define DLOG(s, ...)                                               \
+    do {                                                           \
+        if ((s)->cfg.features.debug) fprintf(stderr, __VA_ARGS__); \
+    } while (0)
 
 static inline void out_of_bound(GPGPUState *s, uint32_t addr, int len)
 {
