@@ -170,7 +170,7 @@ int fuzzer_run(GPGPUState *s, uint32_t seed, int rounds, int verbose)
                 if (op == 0x63)
                     raw[i] = (raw[i] & ~0xFE000F80) | enc_b_imm(off);
                 else
-                    raw[i] = (raw[i] & ~0xFFF00000) | enc_j_imm(off);
+                    raw[i] = (raw[i] & ~0xFFFFF000) | enc_j_imm(off);
             }
         }
 
@@ -242,14 +242,17 @@ int fuzzer_run(GPGPUState *s, uint32_t seed, int rounds, int verbose)
 }
 
 /* ---- replay mode: 直接执行指定 hex 指令序列 (供 bisect 使用) ---- */
-int fuzzer_replay(GPGPUState *s, const char *hex_list, int verbose) {
+int fuzzer_replay(GPGPUState *s, const char *hex_list, int verbose)
+{
     /* 解析 hex 列表 */
-    uint32_t raw[64]; int ni = 0;
+    uint32_t raw[64];
+    int ni = 0;
     const char *p = hex_list;
     while (*p && ni < 63) {
-        while (*p == ' ') p++;
+        while (*p == ' ')
+            p++;
         if (!*p) break;
-        raw[ni++] = (uint32_t)strtoul(p, (char**)&p, 16);
+        raw[ni++] = (uint32_t)strtoul(p, (char **)&p, 16);
     }
     if (ni == 0) return -1;
 
@@ -257,54 +260,64 @@ int fuzzer_replay(GPGPUState *s, const char *hex_list, int verbose) {
     memcpy(s->vram_ptr + KERN_ADDR, raw, ni * 4);
     s->kernel.kernel_addr = KERN_ADDR;
 
-    SIMDDecoder dec = {0}; simd_decoder_init(&dec);
-    int tc; ThOp *code = simd_predecode(&dec, s, KERN_ADDR, KERN_MAX, &tc);
+    SIMDDecoder dec = {0};
+    simd_decoder_init(&dec);
+    int tc;
+    ThOp *code = simd_predecode(&dec, s, KERN_ADDR, KERN_MAX, &tc);
     if (!code) return -1;
 
-    uint32_t ga[32*32]={0}, fa[32*32]={0}, pa[32], ma[32], ca[32]={0};
-    uint32_t gb[32*32]={0}, fb[32*32]={0}, pb[32], mb[32], cb[32]={0};
+    uint32_t ga[32 * 32] = {0}, fa[32 * 32] = {0}, pa[32], ma[32], ca[32] = {0};
+    uint32_t gb[32 * 32] = {0}, fb[32 * 32] = {0}, pb[32], mb[32], cb[32] = {0};
     for (int l = 0; l < 32; l++) {
-        pa[l] = pb[l] = KERN_ADDR; ma[l] = mb[l] = l;
+        pa[l] = pb[l] = KERN_ADDR;
+        ma[l] = mb[l] = l;
         for (int rg = 0; rg < 32; rg++) {
             uint32_t gv = rg ? (uint32_t)(l * 2654435761u) : 0;
             uint32_t fv = (uint32_t)(l * 0x9E3779B9u);
-            ga[rg*32+l] = gb[rg*32+l] = gv;
-            fa[rg*32+l] = fb[rg*32+l] = fv;
+            ga[rg * 32 + l] = gb[rg * 32 + l] = gv;
+            fa[rg * 32 + l] = fb[rg * 32 + l] = fv;
         }
     }
 
-    EngineContext ca_ = {.s=s, .active=0xFFFFFFFF, .thread_id={0,0,0}, .block_id={0,0,0}};
-    EngineContext cb_ = {.s=s, .active=0x1, .thread_id={0,0,0}, .block_id={0,0,0}};
-    SIMTFrame sa[32], sb[32]; int da=0, db=0;
+    EngineContext ca_ = {.s = s, .active = 0xFFFFFFFF, .thread_id = {0, 0, 0}, .block_id = {0, 0, 0}};
+    EngineContext cb_ = {.s = s, .active = 0x1, .thread_id = {0, 0, 0}, .block_id = {0, 0, 0}};
+    SIMTFrame sa[32], sb[32];
+    int da = 0, db = 0;
 
     if (verbose) {
         fprintf(stderr, "REPLAY %d insts:", ni);
-        for (int i = 0; i < ni; i++) fprintf(stderr, " %08x", raw[i]);
+        for (int i = 0; i < ni; i++)
+            fprintf(stderr, " %08x", raw[i]);
         fprintf(stderr, "\n");
     }
 
     /* trace mode: test each prefix to find crash point */
     if (verbose > 1) {
         for (int end = 0; end < ni; end++) {
-            uint32_t sub_raw[64]; int sn = end + 1;
+            uint32_t sub_raw[64];
+            int sn = end + 1;
             memcpy(sub_raw, raw, sn * 4);
-            sub_raw[sn-1] = 0x00100073; /* replace last with ebreak */
+            sub_raw[sn - 1] = 0x00100073; /* replace last with ebreak */
             memcpy(s->vram_ptr + KERN_ADDR, sub_raw, sn * 4);
             ThOp *sub = simd_predecode(&dec, s, KERN_ADDR, KERN_MAX, &tc);
 
-            uint32_t sg[32*32], sf[32*32], sp[32], sm[32], sc[32];
-            memcpy(sg, ga, sizeof(sg)); memcpy(sf, fa, sizeof(sf));
-            memcpy(sp, pa, sizeof(sp)); memcpy(sm, ma, sizeof(sm));
+            uint32_t sg[32 * 32], sf[32 * 32], sp[32], sm[32], sc[32];
+            memcpy(sg, ga, sizeof(sg));
+            memcpy(sf, fa, sizeof(sf));
+            memcpy(sp, pa, sizeof(sp));
+            memcpy(sm, ma, sizeof(sm));
             memset(sc, 0, sizeof(sc));
-            SIMTFrame sstk[32]; int ssd = 0;
+            SIMTFrame sstk[32];
+            int ssd = 0;
 
             int r = engine_exec(sub, tc, &ca_, sg, sf, sp, sm, sc, sstk, &ssd, -1);
-            fprintf(stderr, "  [%d] 0x%08x %s r=%d", end, raw[end],
-                    r==0?"OK":(r==-1?"ILLEGAL":"CRASH?"), r);
+            fprintf(stderr, "  [%d] 0x%08x %s r=%d", end, raw[end], r == 0 ? "OK" : (r == -1 ? "ILLEGAL" : "CRASH?"),
+                    r);
             if (r == 0) {
-                fprintf(stderr, "  gpr[10]=0x%x fpr[10]=%f\n", sg[10*32+0],
-                        ((float*)sf)[10*32+0]);
-            } else { fprintf(stderr, "\n"); }
+                fprintf(stderr, "  gpr[10]=0x%x fpr[10]=%f\n", sg[10 * 32 + 0], ((float *)sf)[10 * 32 + 0]);
+            } else {
+                fprintf(stderr, "\n");
+            }
             free(sub);
         }
         free(code);
@@ -316,10 +329,11 @@ int fuzzer_replay(GPGPUState *s, const char *hex_list, int verbose) {
     free(code);
 
     /* x0 check */
-    for (int l = 0; l < 32; l++) if (ga[l] || gb[l]) return 1;
+    for (int l = 0; l < 32; l++)
+        if (ga[l] || gb[l]) return 1;
     /* lane 0 check */
     for (int rg = 1; rg < 32; rg++)
-        if (ga[rg*32] != gb[rg*32] || fa[rg*32] != fb[rg*32]) return 1;
+        if (ga[rg * 32] != gb[rg * 32] || fa[rg * 32] != fb[rg * 32]) return 1;
 
     return (ra != 0 || rb != 0) ? 1 : 0;
 }

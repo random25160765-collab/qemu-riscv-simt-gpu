@@ -92,8 +92,9 @@ int test_run(GPGPUState *s, const char *group, const char *filter)
     int errors = 0;
     stats_reset();
     printf(STYLE_BOLD "%s=== %s ===%s\n\n",
-           group && !strcmp(group, "bench") ? COLOR_YELLOW :
-           group && !strcmp(group, "func")  ? COLOR_CYAN : "",
+           group && !strcmp(group, "bench")  ? COLOR_YELLOW
+           : group && !strcmp(group, "func") ? COLOR_CYAN
+                                             : "",
            group ? group : "All", COLOR_RESET);
     for (int i = 0; i < n_tests; i++) {
         TestCase *t = &tests[i];

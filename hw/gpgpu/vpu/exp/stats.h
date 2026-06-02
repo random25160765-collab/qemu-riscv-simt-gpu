@@ -12,18 +12,17 @@
 /* one test result */
 typedef struct {
     const char *name;
-    double      us;
-    uint64_t    flops;
-    uint64_t    warps;
-    uint64_t    bytes_r, bytes_w;
-    uint64_t    cat[4], cat_static[4];
-    uint64_t    branches, diverges;
-    bool        pass, bench;
+    double us;
+    uint64_t flops;
+    uint64_t warps;
+    uint64_t bytes_r, bytes_w;
+    uint64_t cat[4], cat_static[4];
+    uint64_t branches, diverges;
+    bool pass, bench;
 } StatsEntry;
 
 /* collect: snapshots s->stats + metadata */
-void stats_snapshot(const GPGPUState *s, const char *name,
-                    double us, uint64_t flops, bool bench, bool pass);
+void stats_snapshot(const GPGPUState *s, const char *name, double us, uint64_t flops, bool bench, bool pass);
 
 /* render table */
 void stats_render(void);

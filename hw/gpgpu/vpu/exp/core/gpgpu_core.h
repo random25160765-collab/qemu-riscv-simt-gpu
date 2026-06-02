@@ -124,6 +124,19 @@ typedef struct GPGPUWarp {
 #define GPGPU_CORE_CTRL_GRID_DIM_Y (GPGPU_CORE_CTRL_BASE + 0x34)
 #define GPGPU_CORE_CTRL_GRID_DIM_Z (GPGPU_CORE_CTRL_BASE + 0x38)
 
+/* Perf counters (read-only, kernel visible via lw) */
+#define GPGPU_CORE_PERF_BASE           0x80000200
+#define GPGPU_CORE_PERF_TOTAL_WARPS    (GPGPU_CORE_PERF_BASE + 0x00)
+#define GPGPU_CORE_PERF_KERNEL_OPS     (GPGPU_CORE_PERF_BASE + 0x04)
+#define GPGPU_CORE_PERF_BYTES_READ     (GPGPU_CORE_PERF_BASE + 0x08)
+#define GPGPU_CORE_PERF_BYTES_WRITE    (GPGPU_CORE_PERF_BASE + 0x0C)
+#define GPGPU_CORE_PERF_TOTAL_BRANCHES (GPGPU_CORE_PERF_BASE + 0x10)
+#define GPGPU_CORE_PERF_DIVERGES       (GPGPU_CORE_PERF_BASE + 0x14)
+#define GPGPU_CORE_PERF_CAT_ALU        (GPGPU_CORE_PERF_BASE + 0x18)
+#define GPGPU_CORE_PERF_CAT_FP         (GPGPU_CORE_PERF_BASE + 0x1C)
+#define GPGPU_CORE_PERF_CAT_MEM        (GPGPU_CORE_PERF_BASE + 0x20)
+#define GPGPU_CORE_PERF_CAT_BR         (GPGPU_CORE_PERF_BASE + 0x24)
+
 /*
  * ============================================================================
  * GPGPU 错误码 (用于 EVENT_ERROR_EVENT 的 detail 字段)

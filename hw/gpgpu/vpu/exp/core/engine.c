@@ -62,6 +62,17 @@ static inline uint32_t ctrl_read(const EngineContext *ctx, uint32_t addr, int la
     case 0x30: return s->kernel.grid_dim[0];
     case 0x34: return s->kernel.grid_dim[1];
     case 0x38: return s->kernel.grid_dim[2];
+    /* perf counters (read-only) */
+    case 0x200: return (uint32_t)s->stats.total_warps;
+    case 0x204: return (uint32_t)s->stats.kernel_ops;
+    case 0x208: return (uint32_t)s->stats.bytes_read;
+    case 0x20C: return (uint32_t)s->stats.bytes_write;
+    case 0x210: return (uint32_t)s->stats.total_branches;
+    case 0x214: return (uint32_t)s->stats.simt_diverges;
+    case 0x218: return (uint32_t)s->stats.cat[0]; /* ALU */
+    case 0x21C: return (uint32_t)s->stats.cat[1]; /* FP */
+    case 0x220: return (uint32_t)s->stats.cat[2]; /* MEM */
+    case 0x224: return (uint32_t)s->stats.cat[3]; /* BR */
     default: return 0;
     }
 }
@@ -237,6 +248,7 @@ op_jalr: {
         if (perf_enabled) s->stats.total_branches++;                        \
         if (_taken && _not_taken) {                                         \
             /* 分歧: push not_taken, 先跑 taken */                      \
+            if (_sdepth >= SIMT_STACK_MAX) return -1;                       \
             if (perf_enabled) s->stats.simt_diverges++;                     \
             _stk[_sdepth].ft_idx = (int32_t)(ip - code);                    \
             _stk[_sdepth].mask = _not_taken;                                \
@@ -399,7 +411,8 @@ op_auipc: {
     }
     ALUI(addi, +)
     ALUI(xori, ^)
-    ALUI(ori, |) ALUI(andi, &)
+    ALUI(ori, |)
+    ALUI(andi, &)
 #undef ALUI
 
             op_slti:
@@ -635,40 +648,39 @@ op_fused_vecmul: {
 
 /* ============================================================
      * fused_matmul_loop — DFG 融合 matmul 整个 K 循环
-     * params[0]=K, [1]=N (B column stride), [2]=a_base, [3]=b_base
-     * rs1=row_reg, rs2=col_reg, rd=acc_reg
+     *   params[0]=a_base, [1]=b_base
+     *   使用 ctx->block_id[0] 为 row, ctx->thread_id[0]+lane 为 col
      * ============================================================ */
 op_fused_matmul_loop: {
-    int row_r = ip[-1].rs1, col_r = ip[-1].rs2, acc_r = ip[-1].rd;
+    int acc_r = ip[-1].rd;
     uint32_t a_base = (uint32_t)ip[-1].params[0];
     uint32_t b_base = (uint32_t)ip[-1].params[1];
     int skip = ip[-1].skip;
     int K = (int)*(uint32_t *)(s->vram_ptr + 0); /* K 在 VRAM[0] */
     int N_cols = (int)s->kernel.block_dim[0];    /* N = blockDim.x */
 
-    uint32_t col[32];
-    memcpy(col, &gpr[col_r * 32], 128);
-    uint32_t row0 = gpr[row_r * 32 + 0];
-    float *A_row = (float *)(s->vram_ptr + a_base + row0 * K * 4);
-
-    for (int k = 0; k < K; k++) {
-        float aik = A_row[k];
-        FOR_EACH_LANE
-        {
-            float bkj = *(float *)(s->vram_ptr + b_base + (k * N_cols + col[_li]) * 4);
-            FR(acc_r, _li) += aik * bkj;
+    FOR_EACH_LANE
+    {
+        int row = (int)ctx->block_id[0];
+        int col = (int)(ctx->thread_id[0] + _li);
+        float *A_row = (float *)(s->vram_ptr + a_base + row * K * 4);
+        float *B = (float *)(s->vram_ptr + b_base);
+        float sum = FR(acc_r, _li);
+        for (int k = 0; k < K; k++) {
+            sum += A_row[k] * B[k * N_cols + col];
         }
+        FR(acc_r, _li) = sum;
+        PC(_li) += ip[-1].pc_advance;
     }
-    FOR_EACH_LANE PC(_li) += ip[-1].pc_advance;
-    /* 等效统计: K×(2load+1fmadd+1addi+1bne), 每 lane 8K bytes 读 */
+    /* 等效统计 */
     {
         uint64_t n = __builtin_popcount(_active);
         PERF_IF(s->stats.bytes_read += n * 8 * (uint64_t)K;)
         PERF_IF(s->stats.cat[CAT_MEM] += n * 2 * (uint64_t)K;)
-        s->stats.cat[CAT_FP] += n * K;
-        PERF_IF(s->stats.cat[CAT_ALU] += n * K;)
-        s->stats.cat[CAT_BR] += n * K;
-        s->stats.total_branches += K;
+        PERF_IF(s->stats.cat[CAT_FP] += n * (uint64_t)K;)
+        PERF_IF(s->stats.cat[CAT_ALU] += n * (uint64_t)K;)
+        PERF_IF(s->stats.cat[CAT_BR] += n * (uint64_t)K;)
+        PERF_IF(s->stats.total_branches += (uint64_t)K;)
     }
     ip += skip;
     NEXT();
@@ -966,7 +978,8 @@ op_fsw: {
     }
     FPBIN(fadd_s, +)
     FPBIN(fsub_s, -)
-    FPBIN(fmul_s, *) FPBIN(fdiv_s, /)
+    FPBIN(fmul_s, *)
+    FPBIN(fdiv_s, /)
 #undef FPBIN
 
             /* FMA — SoA 展开 (之前 simd 缺失的变体也补全) */
