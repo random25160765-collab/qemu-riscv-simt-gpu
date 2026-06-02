@@ -12,7 +12,7 @@
 #include "config.h"
 #include "gpgpu_core.h"
 #include "engine.h"
-#include "memory.h"
+#include "vram.h"
 #include "predecode.h"
 #include "dispatch.h"
 

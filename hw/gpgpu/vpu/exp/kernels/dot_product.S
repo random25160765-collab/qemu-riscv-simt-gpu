@@ -11,8 +11,8 @@
 .globl _start
 _start:
     lw   t0, 0(zero)       /* t0 = N */
-    lui  t1, 0x100          /* A base */
-    lui  t2, 0x200          /* B base */
+    lw   t1, 0x80(zero)          /* A base */
+    lw   t2, 0x84(zero)          /* B base */
 
     fcvt.s.w f0, zero       /* f0 = sum = 0.0 */
     addi t3, zero, 0        /* i = 0 */

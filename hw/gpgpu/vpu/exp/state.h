@@ -15,6 +15,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include "config.h"
+#include "core/vram_alloc.h"
 
 /*
  * ============================================================================
@@ -84,11 +85,8 @@ typedef struct GPGPUState {
     /* VRAM (本地堆分配) */
     uint8_t *vram_ptr;
 
-    /* VRAM bitmap allocator: 4KB pages, 64MB max → 2048 bytes */
-#define VRAM_PAGE_SIZE 4096
-#define VRAM_MAX_PAGES ((64 * 1024 * 1024) / VRAM_PAGE_SIZE)
-#define VRAM_BITMAP_SIZE (VRAM_MAX_PAGES / 8)
-    uint8_t vram_bitmap[VRAM_BITMAP_SIZE];
+    /* VRAM block allocator (best-fit + split/coalesce) */
+    VramAllocator vram_alloc;
 
     /* Shared memory (per-block, 运行时分配) */
     uint8_t *shm_ptr;

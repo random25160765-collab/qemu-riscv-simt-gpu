@@ -40,7 +40,7 @@ _start:
     add  t4, t2, t1
 
     /* 读 sum = Σ e^{x}，用 frcp.s 算 1/sum */
-    lui  t0, 0x400
+    lw   t0, 0x8C(zero)
     flw  f1, 0(t0)          /* f1 = sum */
     frcp.s f1, f1
 
@@ -49,7 +49,7 @@ _start:
 
     /* 读 temp[i] = e^{x[i]} */
     slli t0, t4, 2
-    lui  t1, 0x200
+    lw   t1, 0x84(zero)
     add  t0, t1, t0
     flw  f0, 0(t0)
 
@@ -58,7 +58,7 @@ _start:
 
     /* 存储到 0x300000 */
     slli t0, t4, 2
-    lui  t1, 0x300
+    lw   t1, 0x88(zero)
     add  t0, t1, t0
     fsw  f0, 0(t0)
 

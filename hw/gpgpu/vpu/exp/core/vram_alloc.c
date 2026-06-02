@@ -1,115 +1,400 @@
 /*
- * vram_alloc.c — VRAM Bitmap Page Allocator
+ * vram_alloc.c — VRAM Block Allocator (Vortex MemoryAllocator C port)
  * Copyright (c) 2024-2025, GPL v2
  *
- * 4KB-page first-fit bitmap allocator, inspired by Vortex MemoryAllocator.
- * Simple: mark bits in a bitmap, first-fit scan, no split/coalesce needed.
+ * Best-fit page+block allocator with split on alloc, coalesce on free.
+ * Reference: ~/courses/vortex/sim/common/mem_alloc.h
  */
 #include "vram_alloc.h"
 #include "../state.h"
+#include <stdlib.h>
 #include <string.h>
+#include <stdio.h>
 
-/* --- bitmap helpers --- */
-static inline bool bitmap_test(const uint8_t *bm, uint32_t page)
+/* ============================================================
+ *  helpers
+ * ============================================================ */
+
+static uint32_t alignSize(uint32_t size, uint32_t alignment)
 {
-    return (bm[page >> 3] >> (page & 7)) & 1;
-}
-static inline void bitmap_set(uint8_t *bm, uint32_t page)
-{
-    bm[page >> 3] |= (uint8_t)(1U << (page & 7));
-}
-static inline void bitmap_clear(uint8_t *bm, uint32_t page)
-{
-    bm[page >> 3] &= (uint8_t) ~(1U << (page & 7));
+    return (size + alignment - 1) & ~(alignment - 1U);
 }
 
-/* --- lifecycle --- */
+static VramBlock *createBlock(uint32_t addr, uint32_t size)
+{
+    VramBlock *b = calloc(1, sizeof(VramBlock));
+    if (b) {
+        b->addr = addr;
+        b->size = size;
+    }
+    return b;
+}
 
-/* vram_alloc_init: initial full reset, then reserve fixed regions. */
+static void destroyBlock(VramBlock *b)
+{
+    free(b);
+}
+
+/* ============================================================
+ *  page-level: list management (insert / remove / find)
+ * ============================================================ */
+
+/* --- used list (prepend, unordered) --- */
+
+static void insertUsedList(VramPage *page, VramBlock *block)
+{
+    block->nextUsed = page->usedList;
+    if (page->usedList) page->usedList->prevUsed = block;
+    page->usedList = block;
+}
+
+static void removeUsedList(VramPage *page, VramBlock *block)
+{
+    if (block->prevUsed)
+        block->prevUsed->nextUsed = block->nextUsed;
+    else
+        page->usedList = block->nextUsed;
+    if (block->nextUsed) block->nextUsed->prevUsed = block->prevUsed;
+    block->nextUsed = block->prevUsed = NULL;
+}
+
+/* --- free-S list: sorted by SIZE descending (largest first, best-fit scan) --- */
+
+static void insertFreeSList(VramPage *page, VramBlock *block)
+{
+    VramBlock *curr = page->freeSList, *prev = NULL;
+    while (curr && curr->size > block->size) {
+        prev = curr;
+        curr = curr->nextFreeS;
+    }
+    block->nextFreeS = curr;
+    block->prevFreeS = prev;
+    if (prev)
+        prev->nextFreeS = block;
+    else
+        page->freeSList = block;
+    if (curr) curr->prevFreeS = block;
+}
+
+static void removeFreeSList(VramPage *page, VramBlock *block)
+{
+    if (block->prevFreeS)
+        block->prevFreeS->nextFreeS = block->nextFreeS;
+    else
+        page->freeSList = block->nextFreeS;
+    if (block->nextFreeS) block->nextFreeS->prevFreeS = block->prevFreeS;
+    block->nextFreeS = block->prevFreeS = NULL;
+}
+
+/* --- free-M list: sorted by ADDRESS ascending (coalesce on free) --- */
+
+static void insertFreeMList(VramPage *page, VramBlock *block)
+{
+    VramBlock *curr = page->freeMList, *prev = NULL;
+    while (curr && curr->addr < block->addr) {
+        prev = curr;
+        curr = curr->nextFreeM;
+    }
+    block->nextFreeM = curr;
+    block->prevFreeM = prev;
+    if (prev)
+        prev->nextFreeM = block;
+    else
+        page->freeMList = block;
+    if (curr) curr->prevFreeM = block;
+}
+
+static void removeFreeMList(VramPage *page, VramBlock *block)
+{
+    if (block->prevFreeM)
+        block->prevFreeM->nextFreeM = block->nextFreeM;
+    else
+        page->freeMList = block->nextFreeM;
+    if (block->nextFreeM) block->nextFreeM->prevFreeM = block->prevFreeM;
+    block->nextFreeM = block->prevFreeM = NULL;
+}
+
+/* --- find free block: best-fit --- */
+
+static VramBlock *findFreeBlock(VramPage *page, uint32_t size)
+{
+    VramBlock *b = page->freeSList;
+    if (!b || b->size < size) return NULL;
+    /* walk toward smaller blocks, find smallest that fits */
+    while (b->nextFreeS && b->nextFreeS->size >= size)
+        b = b->nextFreeS;
+    return b;
+}
+
+/* --- find used block by address --- */
+
+static VramBlock *findUsedBlock(VramPage *page, uint32_t addr)
+{
+    if (addr < page->addr || addr >= page->addr + page->size) return NULL;
+    VramBlock *b = page->usedList;
+    while (b) {
+        if (b->addr == addr) return b;
+        b = b->nextUsed;
+    }
+    return NULL;
+}
+
+/* ============================================================
+ *  page-level: allocate / release blocks within a page
+ * ============================================================ */
+
+static void pageAllocate(VramPage *page, uint32_t size, VramBlock *freeBlock)
+{
+    removeFreeMList(page, freeBlock);
+    removeFreeSList(page, freeBlock);
+
+    /* split: carve off the excess as a new free block */
+    uint32_t extra = freeBlock->size - size;
+    if (extra >= page->blockAlign) {
+        freeBlock->size = size;
+        VramBlock *nb = createBlock(freeBlock->addr + size, extra);
+        if (nb) {
+            insertFreeMList(page, nb);
+            insertFreeSList(page, nb);
+        }
+    }
+    insertUsedList(page, freeBlock);
+}
+
+static void pageRelease(VramPage *page, VramBlock *usedBlock)
+{
+    removeUsedList(page, usedBlock);
+    insertFreeMList(page, usedBlock);
+
+    /* coalesce left */
+    if (usedBlock->prevFreeM) {
+        if (usedBlock->prevFreeM->addr + usedBlock->prevFreeM->size == usedBlock->addr) {
+            VramBlock *left = usedBlock->prevFreeM;
+            left->size += usedBlock->size;
+            left->nextFreeM = usedBlock->nextFreeM;
+            if (left->nextFreeM) left->nextFreeM->prevFreeM = left;
+            removeFreeSList(page, left); /* size changed, re-insert later */
+            destroyBlock(usedBlock);
+            usedBlock = left;
+        }
+    }
+
+    /* coalesce right */
+    if (usedBlock->nextFreeM) {
+        if (usedBlock->addr + usedBlock->size == usedBlock->nextFreeM->addr) {
+            VramBlock *right = usedBlock->nextFreeM;
+            usedBlock->size += right->size;
+            usedBlock->nextFreeM = right->nextFreeM;
+            if (usedBlock->nextFreeM) usedBlock->nextFreeM->prevFreeM = usedBlock;
+            removeFreeSList(page, right);
+            destroyBlock(right);
+        }
+    }
+
+    insertFreeSList(page, usedBlock);
+}
+
+/* ============================================================
+ *  top-level: page list management
+ * ============================================================ */
+
+static VramPage *createPage(VramAllocator *a, uint32_t addr, uint32_t size)
+{
+    VramPage *page = calloc(1, sizeof(VramPage));
+    if (!page) return NULL;
+    page->addr = addr;
+    page->size = size;
+    page->blockAlign = a->blockAlign;
+
+    /* initial free block covers entire page */
+    VramBlock *fb = createBlock(addr, size);
+    if (!fb) {
+        free(page);
+        return NULL;
+    }
+    page->freeSList = page->freeMList = fb;
+
+    /* insert into sorted page list */
+    if (!a->pages || a->pages->addr > addr) {
+        page->next = a->pages;
+        a->pages = page;
+    } else {
+        VramPage *cur = a->pages;
+        while (cur->next && cur->next->addr < addr)
+            cur = cur->next;
+        page->next = cur->next;
+        cur->next = page;
+    }
+    return page;
+}
+
+static void destroyPage(VramAllocator *a, VramPage *page)
+{
+    /* unlink from page list */
+    VramPage *prev = NULL, *cur = a->pages;
+    while (cur) {
+        if (cur == page) {
+            if (prev)
+                prev->next = cur->next;
+            else
+                a->pages = cur->next;
+            break;
+        }
+        prev = cur;
+        cur = cur->next;
+    }
+    /* free all blocks (should only have the initial free block left) */
+    if (page->freeMList) destroyBlock(page->freeMList);
+    free(page);
+}
+
+static bool findNextAddress(VramAllocator *a, uint32_t size, uint32_t *addr)
+{
+    if (!a->pages) {
+        *addr = a->baseAddress;
+        return true;
+    }
+    uint32_t endOfLast = a->baseAddress;
+    VramPage *cur = a->pages;
+    while (cur) {
+        if (endOfLast + size <= cur->addr) {
+            *addr = endOfLast;
+            return true;
+        }
+        endOfLast = cur->addr + cur->size;
+        cur = cur->next;
+    }
+    if (endOfLast + size <= a->baseAddress + a->capacity) {
+        *addr = endOfLast;
+        return true;
+    }
+    return false;
+}
+
+static bool hasPageOverlap(VramAllocator *a, uint32_t start, uint32_t size)
+{
+    uint32_t end = start + size;
+    VramPage *cur = a->pages;
+    while (cur) {
+        if (start < cur->addr + cur->size && end > cur->addr) return true;
+        cur = cur->next;
+    }
+    (void)a;
+    return false;
+}
+
+/* ============================================================
+ *  public API
+ * ============================================================ */
+
 void vram_alloc_init(struct GPGPUState *s)
 {
-    /* 1. clear entire bitmap */
-    memset(s->vram_bitmap, 0, sizeof(s->vram_bitmap));
+    VramAllocator *a = &s->vram_alloc;
 
-    /* 2. reserve param area: 0x000000 - 0x001000 (scalar params + ptr_table) */
+    /* destroy any existing pages (for reset) */
+    while (a->pages)
+        destroyPage(a, a->pages);
+
+    memset(a, 0, sizeof(*a));
+    a->baseAddress = 0;
+    a->capacity = (uint32_t)s->vram_size;
+    a->pageAlign = VRAM_PAGE_ALIGN;
+    a->blockAlign = VRAM_BLOCK_ALIGN;
+
+    /* reserve param area */
     vram_reserve(s, 0, 0x1000);
-
-    /* 3. reserve legacy data region: 0x100000 - 0x500000
-     *    (vecmul, gelu, softmax, etc. still hardcode these addresses) */
-    vram_reserve(s, 0x100000, 0x400000);
-
-    /* 4. reserve kernel code area: 0x500000 - 0x510000 */
+    /* reserve kernel code area */
     vram_reserve(s, 0x500000, 0x10000);
 
-    /* 5. zero the ptr_table */
     memset(s->vram_ptr + PTR_TABLE_OFFSET, 0, PTR_TABLE_SIZE);
 }
 
-/* vram_alloc_reset: free all user allocations, keep reserved regions.
- * Re-run vram_alloc_init logic. */
 void vram_alloc_reset(struct GPGPUState *s)
 {
     vram_alloc_init(s);
 }
 
-/* --- core API --- */
-
-/* vram_alloc: first-fit scan for 'npages' consecutive free pages.
- * Returns VRAM byte offset, or 0 on OOM. */
 uint32_t vram_alloc(struct GPGPUState *s, size_t size)
 {
-    uint32_t npages = (uint32_t)((size + VRAM_PAGE_SIZE - 1) / VRAM_PAGE_SIZE);
-    uint32_t max_page = (uint32_t)(s->vram_size / VRAM_PAGE_SIZE);
-    if (npages == 0 || npages > max_page) return 0;
+    VramAllocator *a = &s->vram_alloc;
+    if (size == 0) return 0;
 
-    uint32_t run_start = 0;
-    uint32_t run_len = 0;
+    uint32_t asize = alignSize((uint32_t)size, a->blockAlign);
 
-    for (uint32_t p = 0; p < max_page; p++) {
-        if (!bitmap_test(s->vram_bitmap, p)) {
-            if (run_len == 0) run_start = p;
-            run_len++;
-            if (run_len >= npages) {
-                /* mark pages as used */
-                for (uint32_t i = run_start; i < run_start + npages; i++)
-                    bitmap_set(s->vram_bitmap, i);
-                return run_start * VRAM_PAGE_SIZE;
-            }
-        } else {
-            run_len = 0;
-        }
+    /* search existing pages for a free block (best-fit) */
+    VramBlock *fb = NULL;
+    VramPage *page = a->pages;
+    while (page) {
+        fb = findFreeBlock(page, asize);
+        if (fb) break;
+        page = page->next;
     }
-    return 0; /* OOM */
+
+    /* no existing block found → create a new page */
+    if (!fb) {
+        uint32_t pageSize = alignSize(asize, a->pageAlign);
+        uint32_t pageAddr;
+        if (!findNextAddress(a, pageSize, &pageAddr)) {
+            fprintf(stderr, "vram_alloc: OOM (need %u bytes)\n", (unsigned)size);
+            return 0;
+        }
+        page = createPage(a, pageAddr, pageSize);
+        if (!page) return 0;
+        fb = findFreeBlock(page, asize);
+        if (!fb) return 0;
+    }
+
+    pageAllocate(page, asize, fb);
+    a->allocated += asize;
+    return fb->addr;
 }
 
-/* vram_free: clear bitmap bits for the given address range.
- * addr must be page-aligned. */
 void vram_free(struct GPGPUState *s, uint32_t addr)
 {
-    uint32_t page = addr / VRAM_PAGE_SIZE;
-    uint32_t max_page = (uint32_t)(s->vram_size / VRAM_PAGE_SIZE);
-
-    /* find the extent: clear consecutive used pages starting at 'page' */
-    while (page < max_page && bitmap_test(s->vram_bitmap, page))
-        bitmap_clear(s->vram_bitmap, page++);
+    VramAllocator *a = &s->vram_alloc;
+    VramPage *page = a->pages;
+    while (page) {
+        VramBlock *b = findUsedBlock(page, addr);
+        if (b) {
+            uint32_t sz = b->size;
+            pageRelease(page, b);
+            a->allocated -= sz;
+            if (!page->usedList) destroyPage(a, page);
+            return;
+        }
+        page = page->next;
+    }
 }
 
-/* vram_reserve: mark a fixed address range as used. */
 void vram_reserve(struct GPGPUState *s, uint32_t addr, size_t size)
 {
-    uint32_t start = addr / VRAM_PAGE_SIZE;
-    uint32_t npages = (uint32_t)((size + VRAM_PAGE_SIZE - 1) / VRAM_PAGE_SIZE);
-    uint32_t max_page = (uint32_t)(s->vram_size / VRAM_PAGE_SIZE);
+    VramAllocator *a = &s->vram_alloc;
+    if (size == 0) return;
 
-    for (uint32_t p = start; p < start + npages && p < max_page; p++)
-        bitmap_set(s->vram_bitmap, p);
+    uint32_t asize = alignSize((uint32_t)size, a->pageAlign);
+
+    if (hasPageOverlap(a, addr, asize)) {
+        fprintf(stderr, "vram_reserve: [0x%x-0x%x] overlaps existing allocation\n", addr, addr + (uint32_t)size);
+        return;
+    }
+
+    VramPage *page = createPage(a, addr, asize);
+    if (!page) return;
+
+    VramBlock *fb = findFreeBlock(page, asize);
+    if (fb) {
+        pageAllocate(page, asize, fb);
+        a->allocated += asize;
+    }
 }
 
 /* --- ptr_table helpers --- */
+
 uint32_t vram_ptr_read(struct GPGPUState *s, int slot)
 {
     return *(uint32_t *)(s->vram_ptr + PTR_TABLE_OFFSET + (unsigned)slot * 4);
 }
+
 void vram_ptr_write(struct GPGPUState *s, int slot, uint32_t addr)
 {
     *(uint32_t *)(s->vram_ptr + PTR_TABLE_OFFSET + (unsigned)slot * 4) = addr;

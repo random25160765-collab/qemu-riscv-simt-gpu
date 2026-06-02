@@ -20,7 +20,12 @@ for i in range(32): GPR[f'x{i}'] = i
 
 FPR = {}
 for i in range(32): FPR[f'f{i}'] = i
-for i in range(16):  FPR[f'v{i}'] = 16 + i   # v0..v15 = f16..f31
+# Custom VPU: v0-v15 → FPR 16-31 (parse_reg uses this)
+for i in range(16): FPR[f'v{i}'] = 16 + i
+
+# Standard RVV: v0-v31 → VPR 0-31 (separate register file, used directly by RVV paths)
+RVV_VREG = {}
+for i in range(32): RVV_VREG[f'v{i}'] = i
 
 ACC = {}
 for i in range(8): ACC[f'acc{i}'] = i
@@ -121,15 +126,107 @@ for name, info in TABLE.items():
     elif name.endswith('_v') and not name.endswith('.v'):
         MNEMONIC_MAP[name.replace('_v', '.v')] = info
 
+# ── Standard RVV OPIVV (opcode 0x57, funct3=000) ────────────────
+RVV_OPIVV = {
+    'vadd.vv':   0b000000,
+    'vsub.vv':   0b000010,
+    'vmin.vv':   0b000101,
+    'vminu.vv':  0b000100,
+    'vmax.vv':   0b000111,
+    'vmaxu.vv':  0b000110,
+    'vand.vv':   0b001001,
+    'vor.vv':    0b001010,
+    'vxor.vv':   0b001011,
+    'vsll.vv':   0b100101,
+    'vsrl.vv':   0b101000,
+    'vsra.vv':   0b101001,
+    'vmseq.vv':  0b011000,
+    'vmsne.vv':  0b011001,
+    'vmsltu.vv': 0b011010,
+    'vmslt.vv':  0b011011,
+    'vmerge.vvm':0b010111,
+}
+for mnem, f6 in RVV_OPIVV.items():
+    MNEMONIC_MAP[mnem] = ('RVV', f6, 1)  # ('RVV', funct6, vm)
+# vmerge.vvm requires vm=0
+MNEMONIC_MAP['vmerge.vvm'] = ('RVV', 0b010111, 0)
+
+# RVV unit-stride load/store (funct3=001/010, funct6=0, vm=1)
+MNEMONIC_MAP['vle32.v'] = ('RVVL', 0b000000, 1)   # ('RVVL', funct6, vm)
+MNEMONIC_MAP['vse32.v'] = ('RVVS', 0b000000, 1)   # ('RVVS', funct6, vm)
+
+# RVV OPFVV (funct3=001) and OPFVF (funct3=101)
+MNEMONIC_MAP['vfmul.vv'] = ('RVV', 0b100100, 1)   # vd, vs1, vs2
+MNEMONIC_MAP['vfmul.vf'] = ('RVVF', 0b100100, 1)  # vd, vs2(vec), rs1(scalar) — special
+
 # ── Assembler ───────────────────────────────────────────────────
 
 def encode_r(opcode, funct3, funct7, rd, rs1, rs2):
     return (funct7 << 25) | ((rs2 & 0x1F) << 20) | ((rs1 & 0x1F) << 15) | ((funct3 & 7) << 12) | ((rd & 0x1F) << 7) | opcode
 
+def encode_rvv(funct6, vm, vd, vs1, vs2):
+    return (funct6 << 26) | ((vm & 1) << 25) | ((vs2 & 0x1F) << 20) | ((vs1 & 0x1F) << 15) | (0 << 12) | ((vd & 0x1F) << 7) | 0x57
+
 def assemble(name, operands):
-    """Assemble one instruction → 32-bit word (or None if not custom)."""
+    """Assemble one instruction → 32-bit word (or None if not custom/RVV)."""
     if name not in MNEMONIC_MAP:
         return None
+    info = MNEMONIC_MAP[name]
+
+    # Standard RVV path: vadd.vv vd, vs1, vs2 etc.
+    if info[0] == 'RVV':
+        _, funct6, vm = info
+        cleaned = [strip_paren(op) for op in operands if strip_paren(op) and strip_paren(op) != ',']
+        if len(cleaned) < 3: return None
+        vd  = RVV_VREG.get(cleaned[0])
+        vs1 = RVV_VREG.get(cleaned[1])
+        vs2 = RVV_VREG.get(cleaned[2])
+        if vd is None or vs1 is None or vs2 is None: return None
+        return encode_rvv(funct6, vm, vd, vs1, vs2)
+
+    # RVV load: vle32.v vd, (rs1) → vd=VPR, rs1=GPR, opcode=0x07 funct3=6
+    if info[0] == 'RVVL':
+        _, funct6, vm = info
+        cleaned = [strip_paren(op) for op in operands if strip_paren(op) and strip_paren(op) != ',']
+        if len(cleaned) < 2: return None
+        vd  = RVV_VREG.get(cleaned[0])
+        rs1 = GPR.get(cleaned[1])
+        if vd is None or rs1 is None: return None
+        return (funct6 << 26) | ((vm & 1) << 25) | ((rs1 & 0x1F) << 15) | (6 << 12) | ((vd & 0x1F) << 7) | 0x07
+
+    # RVV store: vse32.v vs3, (rs1) → vs3=VPR, rs1=GPR, opcode=0x27 funct3=6
+    if info[0] == 'RVVS':
+        _, funct6, vm = info
+        cleaned = [strip_paren(op) for op in operands if strip_paren(op) and strip_paren(op) != ',']
+        if len(cleaned) < 2: return None
+        vs3 = RVV_VREG.get(cleaned[0])
+        rs1 = GPR.get(cleaned[1])
+        if vs3 is None or rs1 is None: return None
+        return (funct6 << 26) | ((vm & 1) << 25) | ((rs1 & 0x1F) << 15) | (6 << 12) | ((vs3 & 0x1F) << 7) | 0x27
+
+    # RVV OPFVF: vfmul.vf vd, vs2, rs1 → vd=VPR, vs2=VPR, rs1=scalar FPR
+    if info[0] == 'RVVF':
+        _, funct6, vm = info
+        cleaned = [strip_paren(op) for op in operands if strip_paren(op) and strip_paren(op) != ',']
+        if len(cleaned) < 3: return None
+        vd  = RVV_VREG.get(cleaned[0])
+        vs2 = RVV_VREG.get(cleaned[1])
+        rs1 = FPR.get(cleaned[2]) if cleaned[2] in FPR else GPR.get(cleaned[2])
+        if vd is None or vs2 is None or rs1 is None: return None
+        return (funct6 << 26) | ((vm & 1) << 25) | ((vs2 & 0x1F) << 20) | ((rs1 & 0x1F) << 15) | (5 << 12) | ((vd & 0x1F) << 7) | 0x57
+
+    # RVV unary: vfsig.v vd, vs1 → vd=VPR, vs1=VPR
+    if info[0] == 'RVVU':
+        _, funct6, vm = info
+        cleaned = [strip_paren(op) for op in operands if strip_paren(op) and strip_paren(op) != ',']
+        if len(cleaned) < 2: return None
+        vd  = RVV_VREG.get(cleaned[0])
+        vs1 = RVV_VREG.get(cleaned[1])
+        if vd is None or vs1 is None: return None
+        return (funct6 << 26) | ((vm & 1) << 25) | ((vs1 & 0x1F) << 15) | (1 << 12) | ((vd & 0x1F) << 7) | 0x57
+
+    # Custom path
+    opcode, funct3, funct7, fmt, fixed_rs2 = info
     opcode, funct3, funct7, fmt, fixed_rs2 = MNEMONIC_MAP[name]
 
     # Clean operands: strip parens, skip commas

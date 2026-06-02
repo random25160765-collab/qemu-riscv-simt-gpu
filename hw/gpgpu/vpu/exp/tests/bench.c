@@ -12,14 +12,24 @@
 
 extern uint64_t *test_bp(void);
 
+static uint32_t alloc_map(GPGPUState *s, int slot, size_t bytes)
+{
+    uint32_t addr = vram_alloc(s, bytes);
+    vram_ptr_write(s, slot, addr);
+    return addr;
+}
+
 /* --- bench setups --- */
 static void s_vecmul(GPGPUState *s)
 {
     uint64_t *bp = test_bp();
     uint32_t N = (uint32_t)bp[0];
+    uint32_t A = alloc_map(s, PTR_SLOT_A, N * 4);
+    uint32_t B = alloc_map(s, PTR_SLOT_B, N * 4);
+    alloc_map(s, PTR_SLOT_C, N * 4);
     for (uint32_t i = 0; i < N; i++) {
-        ((float *)(s->vram_ptr + 0x100000))[i] = (float)(i % 256);
-        ((float *)(s->vram_ptr + 0x200000))[i] = 3.0f;
+        ((float *)(s->vram_ptr + A))[i] = (float)(i % 256);
+        ((float *)(s->vram_ptr + B))[i] = 3.0f;
     }
 }
 static void s_matmul(GPGPUState *s)
@@ -28,12 +38,9 @@ static void s_matmul(GPGPUState *s)
     uint32_t M = (uint32_t)bp[0], K = (uint32_t)bp[1], N = (uint32_t)bp[2];
     *(uint32_t *)s->vram_ptr = K;
 
-    uint32_t A_base = vram_alloc(s, M * K * 4);
-    uint32_t B_base = vram_alloc(s, K * N * 4);
-    uint32_t C_base = vram_alloc(s, M * N * 4);
-    vram_ptr_write(s, PTR_SLOT_A, A_base);
-    vram_ptr_write(s, PTR_SLOT_B, B_base);
-    vram_ptr_write(s, PTR_SLOT_C, C_base);
+    uint32_t A_base = alloc_map(s, PTR_SLOT_A, M * K * 4);
+    uint32_t B_base = alloc_map(s, PTR_SLOT_B, K * N * 4);
+    uint32_t C_base = alloc_map(s, PTR_SLOT_C, M * N * 4);
 
     for (uint32_t i = 0; i < M * K; i++)
         ((float *)(s->vram_ptr + A_base))[i] = 1.0f;
@@ -44,23 +51,30 @@ static void s_scal(GPGPUState *s)
 {
     uint64_t *bp = test_bp();
     uint32_t N = (uint32_t)bp[0];
+    uint32_t V = alloc_map(s, PTR_SLOT_A, N * 4);
+    alloc_map(s, PTR_SLOT_B, N * 4);
+    uint32_t Alpha = alloc_map(s, PTR_SLOT_D, 4);
     for (uint32_t i = 0; i < N; i++)
-        ((float *)(s->vram_ptr + 0x100000))[i] = (float)(i % 256);
-    *(float *)(s->vram_ptr + 0x400000) = 0.75f;
+        ((float *)(s->vram_ptr + V))[i] = (float)(i % 256);
+    *(float *)(s->vram_ptr + Alpha) = 0.75f;
 }
 static void s_gelu(GPGPUState *s)
 {
     uint64_t *bp = test_bp();
     uint32_t N = (uint32_t)bp[0];
+    uint32_t In = alloc_map(s, PTR_SLOT_A, N * 4);
+    alloc_map(s, PTR_SLOT_B, N * 4);
     for (uint32_t i = 0; i < N; i++)
-        ((float *)(s->vram_ptr + 0x100000))[i] = (float)i * 0.01f;
+        ((float *)(s->vram_ptr + In))[i] = (float)i * 0.01f;
 }
 static void s_softmax(GPGPUState *s)
 {
     uint64_t *bp = test_bp();
     uint32_t N = (uint32_t)bp[0];
+    uint32_t In = alloc_map(s, PTR_SLOT_A, N * 4);
+    alloc_map(s, PTR_SLOT_B, N * 4);
     for (uint32_t i = 0; i < N; i++)
-        ((float *)(s->vram_ptr + 0x100000))[i] = ((float)i - 128.0f) * 0.1f;
+        ((float *)(s->vram_ptr + In))[i] = ((float)i - 128.0f) * 0.1f;
 }
 static int c_ok(GPGPUState *s)
 {

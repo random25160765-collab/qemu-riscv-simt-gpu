@@ -5,9 +5,9 @@
 #include <string.h>
 #include "state.h"
 #include "gpgpu_core.h"
-#include "memory.h"
+#include "vram.h"
 
-/* Cache arrays: defined here, declared extern in memory.h for inline access */
+/* Cache arrays: defined here, declared extern in vram.h for inline access */
 #undef CACHE_SECTORS
 #undef SECTOR_SHIFT
 #define CACHE_SECTORS 128

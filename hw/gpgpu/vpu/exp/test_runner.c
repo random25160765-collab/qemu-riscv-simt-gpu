@@ -15,7 +15,7 @@
 #include "test_runner.h"
 #include "../core/utils.h"
 #include "core/vram_alloc.h"
-#include "memory.h" /* DLOG */
+#include "vram.h" /* DLOG */
 
 #define KERN_ADDR 0x500000
 #define MAX_TESTS 64

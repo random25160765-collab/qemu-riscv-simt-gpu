@@ -1,5 +1,6 @@
 # VPU Simulator Test Suite
 .PHONY: all clean test kernels help format format-check asan
+.PHONY: libengine.a go-build go-test go-all
 
 CMD    ?= func
 FILTER ?=
@@ -21,9 +22,43 @@ RV_CFLAGS = -march=rv32imf -mabi=ilp32 -nostdlib -Ttext=0x0 -Wl,--build-id=none
 SRCS  = main.c test_runner.c config.c stats.c
 SRCS += tests/func.c tests/bench.c tests/native.c tests/register.c
 SRCS += core/engine.c core/scheduler.c core/vram_alloc.c
-SRCS += core/decode_trie.c core/lpfp.c core/memory.c core/proto.c core/table.c
+SRCS += core/decode_trie.c core/lpfp.c core/vram.c core/proto.c core/table.c
 SRCS += vpu/vpu.c tcu/tcu.c
 OBJS  = $(SRCS:.c=.o)
+
+# ── libengine.a: C engine for Go scheduler ──────────────────
+# excludes scheduler.c, test_runner.c, tests/*.c, main.c
+LIB_SRCS  = config.c stats.c
+LIB_SRCS += core/engine.c core/engine_bridge.c core/vram_alloc.c
+LIB_SRCS += core/decode_trie.c core/lpfp.c core/vram.c core/proto.c core/table.c
+LIB_SRCS += vpu/vpu.c tcu/tcu.c
+LIB_OBJS  = $(LIB_SRCS:.c=.o)
+LIB_CFLAGS = -Wall -Wextra -O2 -g -fno-strict-aliasing -I. -Icore -Ivpu -Itcu -Iproto -I/usr/include/lua5.4
+
+libengine.a: $(LIB_OBJS)
+	ar rcs $@ $^
+
+core/engine_bridge.o: core/engine_bridge.c core/engine_bridge.h
+	$(CC) $(LIB_CFLAGS) -c -o $@ $<
+
+$(LIB_OBJS): %.o: %.c
+	@mkdir -p $(dir $@)
+	$(CC) $(LIB_CFLAGS) -c -o $@ $<
+
+# ── Go scheduler ────────────────────────────────────────────
+GOSCHED = gosched
+GOFLAGS = CGO_ENABLED=1
+
+go-build: libengine.a kernels
+	cd $(GOSCHED) && $(GOFLAGS) go build -o ../gpu_sched .
+
+go-test: libengine.a kernels
+	cd $(GOSCHED) && $(GOFLAGS) go test -v ./...
+
+go-all: go-build
+	./gpu_sched
+
+# ── Existing targets ────────────────────────────────────────
 
 KERN_SRCS = $(wildcard kernels/*.S)
 KERN_BINS = $(KERN_SRCS:.S=.bin)
@@ -74,7 +109,8 @@ count:
 	@echo ".lua:"; find . -name '*.lua' | xargs wc -l | tail -1
 	@echo ".py:";  find . -name '*.py'  | xargs wc -l | tail -1
 	@echo ".sh:";  find . -name '*.sh'  | xargs wc -l | tail -1
-	@echo ""; find . \( -name '*.c' -o -name '*.h' -o -name '*.lua' -o -name '*.py' -o -name '*.sh' \) -exec wc -l {} + | sort -rn | head -15
+	@echo ".go:";  find . -name '*.go'  | xargs wc -l | tail -1
+	@echo ""; find . \( -name '*.c' -o -name '*.h' -o -name '*.lua' -o -name '*.py' -o -name '*.sh' -o -name '*.go' \) -exec wc -l {} + | sort -rn | head -15
 
 help:
 	@echo "make        — build & run all tests"

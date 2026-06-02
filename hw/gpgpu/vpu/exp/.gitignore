@@ -1,4 +1,7 @@
 *.o
 *.elf
 *.so
+*.a
 kernels/*.bin
+gpu_sched
+tools/kerncheck

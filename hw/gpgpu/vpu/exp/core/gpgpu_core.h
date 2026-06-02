@@ -24,7 +24,8 @@
  */
 #define GPGPU_WARP_SIZE 32 /* 每个 warp 的 lane 数量 */
 #define GPGPU_NUM_REGS 32  /* RISC-V 通用寄存器数量 */
-#define GPGPU_NUM_FREGS 32 /* RISC-V 浮点寄存器数量 */
+#define GPGPU_NUM_FREGS 32 /* RISC-V 浮点寄存器数量 f0-f31 */
+#define GPGPU_NUM_VREGS 32 /* RISC-V 向量寄存器数量 v0-v31 */
 
 /* 浮点 CSR 地址 */
 #define CSR_FFLAGS 0x001
@@ -86,6 +87,7 @@ typedef union {
 typedef struct GPGPULane {
     GPURegister gpr[GPGPU_NUM_REGS];  /* 通用寄存器 x0-x31 */
     GPURegister fpr[GPGPU_NUM_FREGS]; /* 浮点寄存器 f0-f31 */
+    GPURegister vpr[GPGPU_NUM_VREGS]; /* 向量寄存器 v0-v31 */
     uint32_t pc;                      /* 程序计数器 */
     uint32_t mhartid;                 /* 完整 hart ID (block|warp|lane) */
     uint32_t fcsr;                    /* fflags[4:0] | frm[7:5] */

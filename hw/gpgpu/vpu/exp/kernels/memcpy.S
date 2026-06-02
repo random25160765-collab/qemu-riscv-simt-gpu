@@ -8,8 +8,8 @@
 .globl _start
 _start:
     lw   t0, 0(zero)       /* N */
-    lui  t1, 0x100          /* src */
-    lui  t2, 0x200          /* dst */
+    lw   t1, 0x80(zero)          /* src */
+    lw   t2, 0x84(zero)          /* dst */
     addi t3, zero, 0        /* i */
 
 loop:

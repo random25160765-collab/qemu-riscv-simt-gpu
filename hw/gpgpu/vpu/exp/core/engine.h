@@ -52,6 +52,7 @@ typedef struct {
  *   ctx     — 引擎上下文 (VRAM 指针 + active 掩码)
  *   gpr     — SoA 通用寄存器 [32 regs × 32 lanes]
  *   fpr     — SoA 浮点寄存器 [32 regs × 32 lanes]
+ *   vpr     — SoA 向量寄存器 [32 regs × 32 lanes] (NULL if no RVV)
  *   pc      — 32 个 lane 的程序计数器
  *
  * 返回:
@@ -59,8 +60,8 @@ typedef struct {
  *   -1 = 非法指令
  */
 int engine_exec(ThOp *code, int tcount, const EngineContext *ctx, uint32_t gpr[32 * 32], uint32_t fpr[32 * 32],
-                uint32_t pc[32], uint32_t mhartid[32], uint32_t fcsr[32], SIMTFrame *_stk, int *_sdepth, int resume_pc,
-                float mma_acc[8 * 32]);
+                uint32_t *vpr, uint32_t pc[32], uint32_t mhartid[32], uint32_t fcsr[32], SIMTFrame *_stk, int *_sdepth,
+                int resume_pc, float mma_acc[8 * 32]);
 
 /*
  * ============================================================================

@@ -8,15 +8,15 @@
 
 _start:
     addi t0, zero, 4           # stride = 4
-    lui  t1, 0x100             # A base = 0x100000
+    lw   t1, 0x80(zero)             # A base = 0x100000
     vld.v v0, (t1), t0
 
-    lui  t1, 0x200             # B base = 0x200000
+    lw   t1, 0x84(zero)             # B base = 0x200000
     vld.v v1, (t1), t0
 
     vfmul.v v2, v0, v1
 
-    lui  t1, 0x300             # C base = 0x300000
+    lw   t1, 0x88(zero)             # C base = 0x300000
     vst.v v2, (t1), t0
 
     ebreak

@@ -18,7 +18,7 @@
 #include "gpgpu_core.h"
 #include "engine.h"
 #include "lpfp.h"
-#include "memory.h"
+#include "vram.h"
 #include "dispatch.h"  /* INSTRUCTION_LIST (唯一来源) */
 #include "predecode.h" /* ThOp */
 #include "sfu.h"       /* fast math approx */
@@ -35,6 +35,8 @@
 
 /* float 视图 (SoA)，供 -O3 自动向量化 */
 #define FR(reg, lane) ((float *)fpr)[(reg) * 32 + (lane)]
+/* 向量寄存器视图 (SoA) */
+#define VR(reg, lane) ((float *)vpr)[(reg) * 32 + (lane)]
 
 /* 分支提示 */
 #define LIKELY(x) __builtin_expect(!!(x), 1)
@@ -197,8 +199,8 @@ void engine_resolve_handlers(ThOp *code, int tcount)
  * 引擎入口
  * ============================================================ */
 int engine_exec(ThOp *code, int tcount, const EngineContext *ctx, uint32_t gpr[32 * 32], uint32_t fpr[32 * 32],
-                uint32_t _pc[32], uint32_t _mhartid[32], uint32_t _fcsr[32], SIMTFrame *_stk_ext, int *_sdepth_ext,
-                int resume_pc, float _mma_acc[8 * 32])
+                uint32_t *vpr, uint32_t _pc[32], uint32_t _mhartid[32], uint32_t _fcsr[32], SIMTFrame *_stk_ext,
+                int *_sdepth_ext, int resume_pc, float _mma_acc[8 * 32])
 {
     ThOp *ip;
     uint32_t _active = ctx->active;
@@ -256,7 +258,12 @@ int engine_exec(ThOp *code, int tcount, const EngineContext *ctx, uint32_t gpr[3
                 if (h == &&op_vld_v || h == &&op_vst_v || h == &&op_vfadd_v || h == &&op_vfsub_v || h == &&op_vfmul_v ||
                     h == &&op_vfdiv_v || h == &&op_vffma_v || h == &&op_vfmul_vs || h == &&op_vfadd_vs ||
                     h == &&op_vfdiv_vs || h == &&op_vfexp_v || h == &&op_vfsig_v || h == &&op_vftanh_v ||
-                    h == &&op_vfsqrt_v || h == &&op_vredsum_v || h == &&op_vredmax_v)
+                    h == &&op_vfsqrt_v || h == &&op_vredsum_v || h == &&op_vredmax_v || h == &&op_vadd_vv ||
+                    h == &&op_vsub_vv || h == &&op_vand_vv || h == &&op_vor_vv || h == &&op_vxor_vv ||
+                    h == &&op_vmin_vv || h == &&op_vminu_vv || h == &&op_vmax_vv || h == &&op_vmaxu_vv ||
+                    h == &&op_vsll_vv || h == &&op_vsrl_vv || h == &&op_vsra_vv || h == &&op_vmseq_vv ||
+                    h == &&op_vmsne_vv || h == &&op_vmslt_vv || h == &&op_vmsltu_vv || h == &&op_vmerge_vvm ||
+                    h == &&op_vle32_v || h == &&op_vse32_v)
                     dispatch[_j] = &&op_illegal;
             }
         }
@@ -865,6 +872,203 @@ op_vredmax_v: {
     NEXT();
 }
 
+/* ============================================================
+     * RVV standard integer vector — OPIVV (opcode 0x57, funct3=000)
+     * vm bit (inst[25]): 0=masked by v0.LSB, 1=unmasked
+     * ============================================================ */
+#define VINTALU(name, op)                                                                           \
+    op_##name:                                                                                      \
+    {                                                                                               \
+        int vd = ip[-1].rd, vs1 = ip[-1].rs1, vs2 = ip[-1].rs2;                                     \
+        uint32_t _vm = (ip[-1].inst >> 25) & 1;                                                     \
+        FOR_EACH_LANE                                                                               \
+        {                                                                                           \
+            if (_vm || (*(uint32_t *)&VR(0, _li) & 1))                                              \
+                *(int32_t *)&VR(vd, _li) = *(int32_t *)&VR(vs1, _li) op * (int32_t *)&VR(vs2, _li); \
+            PC(_li) += 4;                                                                           \
+        }                                                                                           \
+        NEXT();                                                                                     \
+    }
+#define VINTCMP(name, op)                                                                                      \
+    op_##name:                                                                                                 \
+    {                                                                                                          \
+        int vd = ip[-1].rd, vs1 = ip[-1].rs1, vs2 = ip[-1].rs2;                                                \
+        uint32_t _vm = (ip[-1].inst >> 25) & 1;                                                                \
+        FOR_EACH_LANE                                                                                          \
+        {                                                                                                      \
+            if (_vm || (*(uint32_t *)&VR(0, _li) & 1))                                                         \
+                *(int32_t *)&VR(vd, _li) = (*(int32_t *)&VR(vs1, _li) op * (int32_t *)&VR(vs2, _li)) ? -1 : 0; \
+            PC(_li) += 4;                                                                                      \
+        }                                                                                                      \
+        NEXT();                                                                                                \
+    }
+#define VINTCMPU(name, op)                                                                                       \
+    op_##name:                                                                                                   \
+    {                                                                                                            \
+        int vd = ip[-1].rd, vs1 = ip[-1].rs1, vs2 = ip[-1].rs2;                                                  \
+        uint32_t _vm = (ip[-1].inst >> 25) & 1;                                                                  \
+        FOR_EACH_LANE                                                                                            \
+        {                                                                                                        \
+            if (_vm || (*(uint32_t *)&VR(0, _li) & 1))                                                           \
+                *(int32_t *)&VR(vd, _li) = (*(uint32_t *)&VR(vs1, _li) op * (uint32_t *)&VR(vs2, _li)) ? -1 : 0; \
+            PC(_li) += 4;                                                                                        \
+        }                                                                                                        \
+        NEXT();                                                                                                  \
+    }
+#define VINTSHIFT(name, op)                                                     \
+    op_##name:                                                                  \
+    {                                                                           \
+        int vd = ip[-1].rd, vs1 = ip[-1].rs1, vs2 = ip[-1].rs2;                 \
+        uint32_t _vm = (ip[-1].inst >> 25) & 1;                                 \
+        FOR_EACH_LANE                                                           \
+        {                                                                       \
+            if (_vm || (*(uint32_t *)&VR(0, _li) & 1)) {                        \
+                uint32_t _shamt = *(uint32_t *)&VR(vs2, _li) & 31;              \
+                *(int32_t *)&VR(vd, _li) = *(int32_t *)&VR(vs1, _li) op _shamt; \
+            }                                                                   \
+            PC(_li) += 4;                                                       \
+        }                                                                       \
+        NEXT();                                                                 \
+    }
+    VINTALU(vadd_vv, +)
+    VINTALU(vsub_vv, -)
+    VINTALU(vand_vv, &)
+    VINTALU(vor_vv, |)
+    VINTALU(vxor_vv, ^)
+    VINTCMP(vmseq_vv, ==)
+    VINTCMP(vmsne_vv, !=)
+    VINTCMP(vmslt_vv, <)
+    VINTCMPU(vmsltu_vv, <)
+    VINTSHIFT(vsll_vv, <<)
+    VINTSHIFT(vsrl_vv, >>)
+#undef VINTSHIFT
+#undef VINTCMPU
+#undef VINTCMP
+#undef VINTALU
+
+op_vsra_vv: {
+    int vd = ip[-1].rd, vs1 = ip[-1].rs1, vs2 = ip[-1].rs2;
+    uint32_t vm = (ip[-1].inst >> 25) & 1;
+    FOR_EACH_LANE
+    {
+        if (vm || (*(uint32_t *)&VR(0, _li) & 1))
+            *(int32_t *)&VR(vd, _li) = *(int32_t *)&VR(vs1, _li) >> (*(uint32_t *)&VR(vs2, _li) & 31);
+        PC(_li) += 4;
+    }
+    NEXT();
+}
+op_vmin_vv: {
+    int vd = ip[-1].rd, vs1 = ip[-1].rs1, vs2 = ip[-1].rs2;
+    uint32_t vm = (ip[-1].inst >> 25) & 1;
+    FOR_EACH_LANE
+    {
+        if (vm || (*(uint32_t *)&VR(0, _li) & 1)) {
+            int32_t a = *(int32_t *)&VR(vs1, _li), b = *(int32_t *)&VR(vs2, _li);
+            *(int32_t *)&VR(vd, _li) = a < b ? a : b;
+        }
+        PC(_li) += 4;
+    }
+    NEXT();
+}
+op_vminu_vv: {
+    int vd = ip[-1].rd, vs1 = ip[-1].rs1, vs2 = ip[-1].rs2;
+    uint32_t vm = (ip[-1].inst >> 25) & 1;
+    FOR_EACH_LANE
+    {
+        if (vm || (*(uint32_t *)&VR(0, _li) & 1)) {
+            uint32_t a = *(uint32_t *)&VR(vs1, _li), b = *(uint32_t *)&VR(vs2, _li);
+            *(uint32_t *)&VR(vd, _li) = a < b ? a : b;
+        }
+        PC(_li) += 4;
+    }
+    NEXT();
+}
+op_vmax_vv: {
+    int vd = ip[-1].rd, vs1 = ip[-1].rs1, vs2 = ip[-1].rs2;
+    uint32_t vm = (ip[-1].inst >> 25) & 1;
+    FOR_EACH_LANE
+    {
+        if (vm || (*(uint32_t *)&VR(0, _li) & 1)) {
+            int32_t a = *(int32_t *)&VR(vs1, _li), b = *(int32_t *)&VR(vs2, _li);
+            *(int32_t *)&VR(vd, _li) = a > b ? a : b;
+        }
+        PC(_li) += 4;
+    }
+    NEXT();
+}
+op_vmaxu_vv: {
+    int vd = ip[-1].rd, vs1 = ip[-1].rs1, vs2 = ip[-1].rs2;
+    uint32_t vm = (ip[-1].inst >> 25) & 1;
+    FOR_EACH_LANE
+    {
+        if (vm || (*(uint32_t *)&VR(0, _li) & 1)) {
+            uint32_t a = *(uint32_t *)&VR(vs1, _li), b = *(uint32_t *)&VR(vs2, _li);
+            *(uint32_t *)&VR(vd, _li) = a > b ? a : b;
+        }
+        PC(_li) += 4;
+    }
+    NEXT();
+}
+op_vmerge_vvm: {
+    int vd = ip[-1].rd, vs1 = ip[-1].rs1, vs2 = ip[-1].rs2;
+    FOR_EACH_LANE
+    {
+        VR(vd, _li) = (*(uint32_t *)&VR(0, _li) & 1) ? VR(vs2, _li) : VR(vs1, _li);
+        PC(_li) += 4;
+    }
+    NEXT();
+}
+
+op_vle32_v: {
+    int vd = ip[-1].rd, rs1 = ip[-1].rs1;
+    uint32_t vm = (ip[-1].inst >> 25) & 1;
+    FOR_EACH_LANE
+    {
+        if (vm || (*(uint32_t *)&VR(0, _li) & 1)) {
+            uint32_t a = GPR(rs1, _li) + _li * 4;
+            VR(vd, _li) = (a + 4 <= s->vram_size) ? *(float *)(s->vram_ptr + a) : 0.0f;
+        }
+        PC(_li) += 4;
+    }
+    NEXT();
+}
+op_vse32_v: {
+    int vs3 = ip[-1].rd, rs1 = ip[-1].rs1;
+    uint32_t vm = (ip[-1].inst >> 25) & 1;
+    FOR_EACH_LANE
+    {
+        if (vm || (*(uint32_t *)&VR(0, _li) & 1)) {
+            uint32_t a = GPR(rs1, _li) + _li * 4;
+            if (a + 4 <= s->vram_size) *(float *)(s->vram_ptr + a) = VR(vs3, _li);
+        }
+        PC(_li) += 4;
+    }
+    NEXT();
+}
+
+op_vfmul_vv: {
+    int vd = ip[-1].rd, vs1 = ip[-1].rs1, vs2 = ip[-1].rs2;
+    uint32_t vm = (ip[-1].inst >> 25) & 1;
+    FOR_EACH_LANE
+    {
+        if (vm || (*(uint32_t *)&VR(0, _li) & 1))
+            VR(vd, _li) = VR(vs1, _li) * VR(vs2, _li);
+        PC(_li) += 4;
+    }
+    NEXT();
+}
+op_vfmul_vf: {
+    int vd = ip[-1].rd, rs1 = ip[-1].rs1, vs2 = ip[-1].rs2;
+    float sc = FR(rs1, 0);
+    uint32_t vm = (ip[-1].inst >> 25) & 1;
+    FOR_EACH_LANE
+    {
+        if (vm || (*(uint32_t *)&VR(0, _li) & 1))
+            VR(vd, _li) = VR(vs2, _li) * sc;
+        PC(_li) += 4;
+    }
+    NEXT();
+}
     /* ============================================================
      * TCU 矩阵指令 — warp-MMA (custom-1 opcode 0x2B, funct3=111)
      * mma 配置是 warp 本地变量, 避免多 warp 并发写入 s->mma 的 data race

@@ -72,14 +72,14 @@ loop_kx:
     mul  a5, a3, t4
     add  a5, a5, a4
     slli a5, a5, 2
-    lui  t0, 0x100
+    lw   t0, 0x80(zero)
     add  a5, a5, t0
     
     /* 计算卷积核地址: (ky * K + kx) * 4 */
     mul  a6, a1, t5
     add  a6, a6, a2
     slli a6, a6, 2
-    lui  t0, 0x200
+    lw   t0, 0x84(zero)
     add  a6, a6, t0
     
     /* 加载并乘加 */
@@ -99,7 +99,7 @@ done:
     mul  a5, t2, a0
     add  a5, a5, t1
     slli a5, a5, 2
-    lui  t0, 0x300
+    lw   t0, 0x88(zero)
     add  a5, a5, t0
     
     /* 存储结果 */

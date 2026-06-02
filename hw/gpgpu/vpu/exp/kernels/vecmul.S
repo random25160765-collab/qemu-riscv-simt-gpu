@@ -31,17 +31,17 @@ _start:
     slli t1, t1, 2
     addi t0, zero, 4
 
-    lui  t4, 0x100
+    lw   t4, 0x80(zero)
     add  t4, t4, t1
     vld.v v0, (t4), t0
 
-    lui  t4, 0x200
+    lw   t4, 0x84(zero)
     add  t4, t4, t1
     vld.v v1, (t4), t0
 
     vfmul.v v2, v0, v1
 
-    lui  t4, 0x300
+    lw   t4, 0x88(zero)
     add  t4, t4, t1
     vst.v v2, (t4), t0
 

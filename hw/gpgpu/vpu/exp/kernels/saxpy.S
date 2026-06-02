@@ -25,8 +25,8 @@ _start:
     fmv.w.x ft0, t1         /* ft0 = A (float) */
 
     /* 基地址 */
-    lui  t1, 0x100          /* t1 = 0x100000 (X 基地址) */
-    lui  t2, 0x200          /* t2 = 0x200000 (Y 基地址) */
+    lw   t1, 0x80(zero)          /* t1 = 0x100000 (X 基地址) */
+    lw   t2, 0x84(zero)          /* t2 = 0x200000 (Y 基地址) */
 
     /* i = 0 */
     addi t3, zero, 0        /* t3 = i */

@@ -27,7 +27,7 @@ _start:
 
     /* my_x = x[global_id] */
     slli t2, t1, 2
-    lui  t4, 0x100
+    lw   t4, 0x80(zero)
     add  t2, t4, t2
     flw  f0, 0(t2)
     fexp.s f0, f0
@@ -40,7 +40,7 @@ loop:
     bge  t0, t3, done
 
     slli t2, t0, 2
-    lui  t4, 0x100
+    lw   t4, 0x80(zero)
     add  t2, t4, t2
     vld.v v0, (t2), t6
 
@@ -54,7 +54,7 @@ loop:
 done:
     fdiv.s f0, f0, f1
     slli t2, t1, 2
-    lui  t4, 0x200
+    lw   t4, 0x84(zero)
     add  t2, t4, t2
     fsw  f0, 0(t2)
 

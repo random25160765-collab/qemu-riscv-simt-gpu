@@ -17,9 +17,18 @@ static void run_native_vecmul(GPGPUState *s)
 {
     uint32_t N = 65536, nw = N / 32;
     struct timespec T0, T1;
+
+    vram_alloc_reset(s);
+    uint32_t A_base = vram_alloc(s, N * 4);
+    uint32_t B_base = vram_alloc(s, N * 4);
+    uint32_t C_base = vram_alloc(s, N * 4);
+    vram_ptr_write(s, PTR_SLOT_A, A_base);
+    vram_ptr_write(s, PTR_SLOT_B, B_base);
+    vram_ptr_write(s, PTR_SLOT_C, C_base);
+
     for (uint32_t i = 0; i < N; i++) {
-        ((float *)(s->vram_ptr + 0x100000))[i] = (float)(i % 256);
-        ((float *)(s->vram_ptr + 0x200000))[i] = 3.0f;
+        ((float *)(s->vram_ptr + A_base))[i] = (float)(i % 256);
+        ((float *)(s->vram_ptr + B_base))[i] = 3.0f;
     }
     s->kernel.kernel_addr = KERN_ADDR;
     s->kernel.grid_dim[0] = nw;
@@ -39,9 +48,9 @@ static void run_native_vecmul(GPGPUState *s)
     for (uint32_t w = 0; w < nw; w++) {
         for (int l = 0; l < 32; l++) {
             uint32_t t = w * 32 + l;
-            float a = *(float *)(s->vram_ptr + 0x100000 + t * 4);
-            float b = *(float *)(s->vram_ptr + 0x200000 + t * 4);
-            *(float *)(s->vram_ptr + 0x300000 + t * 4) = a * b;
+            float a = *(float *)(s->vram_ptr + A_base + t * 4);
+            float b = *(float *)(s->vram_ptr + B_base + t * 4);
+            *(float *)(s->vram_ptr + C_base + t * 4) = a * b;
             sum += a * b;
         }
     }

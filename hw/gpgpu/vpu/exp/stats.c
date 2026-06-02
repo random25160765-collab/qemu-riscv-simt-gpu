@@ -8,7 +8,7 @@
 #include "stats.h"
 #include "../core/utils.h"
 #include "../core/table.h"
-#include "memory.h" /* DLOG */
+#include "vram.h" /* DLOG */
 
 /* color shortcuts */
 #define KNRM COLOR_RESET
