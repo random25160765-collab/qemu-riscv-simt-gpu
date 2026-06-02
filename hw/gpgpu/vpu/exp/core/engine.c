@@ -92,20 +92,21 @@ static int perf_enabled = -1; /* -1=unset, 从 config 首次读 */
         x;              \
     }
 
-
-    /* 合并分析: warp 内 32 lane 访存是否在同 64B cache line */
-    #define COALESCE(rs1, imm) do { \
-        if (perf_enabled) { \
-            uint32_t _mn = 0xFFFFFFFF, _mx = 0; \
-            for (int _l = 0; _l < 32; _l++) if ((_active >> _l) & 1) { \
-                uint32_t _ad = GPR(rs1, _l) + (imm); \
-                if (_ad < _mn) _mn = _ad; \
-                if (_ad > _mx) _mx = _ad; \
-            } \
-            if ((_mx - _mn) < 64) s->stats.coal_ops++; \
-            s->stats.coal_total++; \
-        } \
-    } while(0)
+/* 合并分析: warp 内 32 lane 访存是否在同 64B cache line */
+#define COALESCE(rs1, imm)                               \
+    do {                                                 \
+        if (perf_enabled) {                              \
+            uint32_t _mn = 0xFFFFFFFF, _mx = 0;          \
+            for (int _l = 0; _l < 32; _l++)              \
+                if ((_active >> _l) & 1) {               \
+                    uint32_t _ad = GPR(rs1, _l) + (imm); \
+                    if (_ad < _mn) _mn = _ad;            \
+                    if (_ad > _mx) _mx = _ad;            \
+                }                                        \
+            if ((_mx - _mn) < 64) s->stats.coal_ops++;   \
+            s->stats.coal_total++;                       \
+        }                                                \
+    } while (0)
 void engine_resolve_handlers(ThOp *code, int tcount)
 {
     (void)code;
@@ -305,7 +306,7 @@ op_lb: {
         PC(_li) += 4;
     }
     PERF_IF(s->stats.bytes_read += __builtin_popcount(_active) * 1;)
-        COALESCE(ip[-1].rs1, ip[-1].imm);
+    COALESCE(ip[-1].rs1, ip[-1].imm);
     NEXT();
 }
 op_lh: {
@@ -318,7 +319,7 @@ op_lh: {
         PC(_li) += 4;
     }
     PERF_IF(s->stats.bytes_read += __builtin_popcount(_active) * 2;)
-        COALESCE(ip[-1].rs1, ip[-1].imm);
+    COALESCE(ip[-1].rs1, ip[-1].imm);
     NEXT();
 }
 op_lw: {
@@ -330,7 +331,7 @@ op_lw: {
         PC(_li) += 4;
     }
     PERF_IF(s->stats.bytes_read += __builtin_popcount(_active) * 4;)
-        COALESCE(ip[-1].rs1, ip[-1].imm);
+    COALESCE(ip[-1].rs1, ip[-1].imm);
     NEXT();
 }
 op_lbu: {
@@ -342,7 +343,7 @@ op_lbu: {
         PC(_li) += 4;
     }
     PERF_IF(s->stats.bytes_read += __builtin_popcount(_active) * 1;)
-        COALESCE(ip[-1].rs1, ip[-1].imm);
+    COALESCE(ip[-1].rs1, ip[-1].imm);
     NEXT();
 }
 op_lhu: {
@@ -354,7 +355,7 @@ op_lhu: {
         PC(_li) += 4;
     }
     PERF_IF(s->stats.bytes_read += __builtin_popcount(_active) * 2;)
-        COALESCE(ip[-1].rs1, ip[-1].imm);
+    COALESCE(ip[-1].rs1, ip[-1].imm);
     NEXT();
 }
 
@@ -434,16 +435,15 @@ op_auipc: {
     ALUI(andi, &)
 #undef ALUI
 
-            op_slti:
+op_slti: {
+    int rd = ip[-1].rd, rs1 = ip[-1].rs1, imm = ip[-1].imm;
+    FOR_EACH_LANE
     {
-        int rd = ip[-1].rd, rs1 = ip[-1].rs1, imm = ip[-1].imm;
-        FOR_EACH_LANE
-        {
-            GPR(rd, _li) = ((int32_t)GPR(rs1, _li) < imm) ? 1 : 0;
-            PC(_li) += 4;
-        }
-        NEXT();
+        GPR(rd, _li) = ((int32_t)GPR(rs1, _li) < imm) ? 1 : 0;
+        PC(_li) += 4;
     }
+    NEXT();
+}
 op_sltiu: {
     int rd = ip[-1].rd, rs1 = ip[-1].rs1, imm = ip[-1].imm;
     FOR_EACH_LANE
@@ -638,188 +638,108 @@ op_remu: {
      * ebreak / done
      * ============================================================ */
 /* ============================================================
-     * fused_vecmul — DFG 融合: load A+load B+fmul+store C
+     * VPU 向量指令 — warp 级 SIMD (custom-1 opcode 0x2B)
      * ============================================================ */
-op_fused_vecmul: {
-    int tid_r = ip[-1].rs1;
-    uint32_t a_base = (uint32_t)ip[-1].params[0];
-    uint32_t b_base = (uint32_t)ip[-1].params[1];
-    uint32_t c_base = (uint32_t)ip[-1].params[2];
-    int skip = ip[-1].skip;
+op_vld_v: {
+    int vd = ip[-1].rd, rs1 = ip[-1].rs1, rs2 = ip[-1].rs2;
     FOR_EACH_LANE
     {
-        uint32_t off = GPR(tid_r, _li) << 2;
-        float a = *(float *)(s->vram_ptr + a_base + off);
-        float b = *(float *)(s->vram_ptr + b_base + off);
-        *(float *)(s->vram_ptr + c_base + off) = a * b;
-        PC(_li) += ip[-1].pc_advance;
+        uint32_t a = GPR(rs1, _li) + _li * GPR(rs2, _li);
+        FPR(vd, _li) = *(uint32_t *)(s->vram_ptr + a);
+        PC(_li) += 4;
     }
-    /* 等效统计: 2load(8B)+1fmul+1store(4B), next 已计 1x cat */
-    {
-        uint64_t n = __builtin_popcount(_active);
-        PERF_IF(s->stats.bytes_read += n * 8;)
-        COALESCE(ip[-1].rs1, ip[-1].imm);
-        PERF_IF(s->stats.bytes_write += n * 4;)
-        PERF_IF(s->stats.cat[CAT_MEM] += n * 3;) PERF_IF(s->stats.cat[CAT_FP] += n;)
-    }
-    ip += skip;
+    PERF_IF(s->stats.bytes_read += __builtin_popcount(_active) * 4;)
     NEXT();
 }
-
-/* ============================================================
-     * fused_matmul_loop — DFG 融合 matmul 整个 K 循环
-     *   params[0]=a_base, [1]=b_base
-     *   使用 ctx->block_id[0] 为 row, ctx->thread_id[0]+lane 为 col
-     * ============================================================ */
-op_fused_matmul_loop: {
-    int acc_r = ip[-1].rd;
-    uint32_t a_base = (uint32_t)ip[-1].params[0];
-    uint32_t b_base = (uint32_t)ip[-1].params[1];
-    int skip = ip[-1].skip;
-    int K = (int)*(uint32_t *)(s->vram_ptr + 0); /* K 在 VRAM[0] */
-    int N_cols = (int)s->kernel.block_dim[0];    /* N = blockDim.x */
-
+op_vst_v: {
+    int rs1 = ip[-1].rs1, rs2 = ip[-1].rs2, vs3 = ip[-1].rd;
     FOR_EACH_LANE
     {
-        int row = (int)ctx->block_id[0];
-        int col = (int)(ctx->thread_id[0] + _li);
-        float *A_row = (float *)(s->vram_ptr + a_base + row * K * 4);
-        float *B = (float *)(s->vram_ptr + b_base);
-        float sum = FR(acc_r, _li);
-        for (int k = 0; k < K; k++) {
-            sum += A_row[k] * B[k * N_cols + col];
+        uint32_t a = GPR(rs1, _li) + _li * GPR(rs2, _li);
+        *(uint32_t *)(s->vram_ptr + a) = FPR(vs3, _li);
+        PC(_li) += 4;
+    }
+    PERF_IF(s->stats.bytes_write += __builtin_popcount(_active) * 4;)
+    NEXT();
+}
+#define VFALU(name, op)                                         \
+    op_##name:                                                  \
+    {                                                           \
+        int vd = ip[-1].rd, vs1 = ip[-1].rs1, vs2 = ip[-1].rs2; \
+        FOR_EACH_LANE                                           \
+        {                                                       \
+            FR(vd, _li) = FR(vs1, _li) op FR(vs2, _li);         \
+            PC(_li) += 4;                                       \
+        }                                                       \
+        NEXT();                                                 \
+    }
+    VFALU(vfadd_v, +)
+    VFALU(vfsub_v, -) VFALU(vfmul_v, *) VFALU(vfdiv_v, /)
+#undef VFALU
+
+            op_vffma_v:
+    {
+        int vd = ip[-1].rd, vs1 = ip[-1].rs1, vs2 = ip[-1].rs2;
+        FOR_EACH_LANE
+        {
+            FR(vd, _li) += FR(vs1, _li) * FR(vs2, _li);
+            PC(_li) += 4;
         }
-        FR(acc_r, _li) = sum;
-        PC(_li) += ip[-1].pc_advance;
+        NEXT();
     }
-    /* 等效统计 */
+#define VFALUS(name, op)                      \
+    op_##name:                                \
+    {                                         \
+        int vd = ip[-1].rd, vs1 = ip[-1].rs1; \
+        float sc = FR(ip[-1].rs2, 0);         \
+        FOR_EACH_LANE                         \
+        {                                     \
+            FR(vd, _li) = FR(vs1, _li) op sc; \
+            PC(_li) += 4;                     \
+        }                                     \
+        NEXT();                               \
+    }
+    VFALUS(vfmul_vs, *)
+    VFALUS(vfadd_vs, +) VFALUS(vfdiv_vs, /)
+#undef VFALUS
+
+#define VFUNA(name, expr)                     \
+    op_##name:                                \
+    {                                         \
+        int vd = ip[-1].rd, vs1 = ip[-1].rs1; \
+        FOR_EACH_LANE                         \
+        {                                     \
+            float v = FR(vs1, _li);           \
+            FR(vd, _li) = expr;               \
+            PC(_li) += 4;                     \
+        }                                     \
+        NEXT();                               \
+    }
+            VFUNA(vfexp_v, fastexp(v)) VFUNA(vfsig_v, fastsigmoid(v)) VFUNA(vftanh_v, fasttanh(v))
+                    VFUNA(vfsqrt_v, sqrtf(v))
+#undef VFUNA
+
+                            op_vredsum_v:
     {
-        uint64_t n = __builtin_popcount(_active);
-        PERF_IF(s->stats.bytes_read += n * 8 * (uint64_t)K;)
-        COALESCE(ip[-1].rs1, ip[-1].imm);
-        PERF_IF(s->stats.cat[CAT_MEM] += n * 2 * (uint64_t)K;)
-        PERF_IF(s->stats.cat[CAT_FP] += n * (uint64_t)K;)
-        PERF_IF(s->stats.cat[CAT_ALU] += n * (uint64_t)K;)
-        PERF_IF(s->stats.cat[CAT_BR] += n * (uint64_t)K;)
-        PERF_IF(s->stats.total_branches += (uint64_t)K;)
+        int rd = ip[-1].rd, vs1 = ip[-1].rs1;
+        float sum = 0;
+        FOR_EACH_LANE
+        {
+            sum += FR(vs1, _li);
+            PC(_li) += 4;
+        }
+        FR(rd, 0) = sum;
+        NEXT();
     }
-    ip += skip;
-    NEXT();
-}
-
-/* ============================================================
-     * fused_ld2_fma — DFG 融合: load A+load B+fmadd (accumulate)
-     * ============================================================ */
-op_fused_ld2_fma: {
-    int row_r = ip[-1].rs1, col_r = ip[-1].rs2, acc_r = ip[-1].rd;
-    uint32_t a_base = (uint32_t)ip[-1].params[0];
-    uint32_t b_base = (uint32_t)ip[-1].params[1];
-    int skip = ip[-1].skip;
-
-    uint32_t row[32];
-    memcpy(row, &gpr[row_r * 32], 128);
-    uint32_t col[32];
-    memcpy(col, &gpr[col_r * 32], 128);
-    __builtin_prefetch(s->vram_ptr + a_base + row[0] * 4, 0, 3);
-    __builtin_prefetch(s->vram_ptr + b_base + col[0] * 4, 0, 3);
-
+op_vredmax_v: {
+    int rd = ip[-1].rd, vs1 = ip[-1].rs1;
+    float mx = -INFINITY;
     FOR_EACH_LANE
     {
-        FR(acc_r, _li) +=
-                *(float *)(s->vram_ptr + a_base + row[_li] * 4) * *(float *)(s->vram_ptr + b_base + col[_li] * 4);
-        PC(_li) += ip[-1].pc_advance;
+        if (FR(vs1, _li) > mx) mx = FR(vs1, _li);
+        PC(_li) += 4;
     }
-    /* 等效: 2load(8B)+1fmadd */
-    {
-        uint64_t n = __builtin_popcount(_active);
-        PERF_IF(s->stats.bytes_read += n * 8;)
-        COALESCE(ip[-1].rs1, ip[-1].imm);
-        PERF_IF(s->stats.cat[CAT_MEM] += n * 2;) PERF_IF(s->stats.cat[CAT_FP] += n;)
-    }
-    ip += skip;
-    NEXT();
-}
-
-/* ============================================================
-     * fused_scal_mul — DFG 融合: load scalar+load vec+fmul+store
-     * ============================================================ */
-op_fused_scal_mul: {
-    int tid_r = ip[-1].rs1;
-    uint32_t v_base = (uint32_t)ip[-1].params[0];
-    uint32_t c_base = (uint32_t)ip[-1].params[1];
-    int skip = ip[-1].skip;
-    float alpha = *(float *)(s->vram_ptr + 0x400000);
-    FOR_EACH_LANE
-    {
-        uint32_t off = GPR(tid_r, _li) << 2;
-        float a = *(float *)(s->vram_ptr + v_base + off);
-        *(float *)(s->vram_ptr + c_base + off) = a * alpha;
-        PC(_li) += ip[-1].pc_advance;
-    }
-    /* 等效: 2load(8B)+1fmul+1store(4B) */
-    {
-        uint64_t n = __builtin_popcount(_active);
-        PERF_IF(s->stats.bytes_read += n * 8;)
-        COALESCE(ip[-1].rs1, ip[-1].imm);
-        PERF_IF(s->stats.bytes_write += n * 4;)
-        PERF_IF(s->stats.cat[CAT_MEM] += n * 3;) PERF_IF(s->stats.cat[CAT_FP] += n;)
-    }
-    ip += skip;
-    NEXT();
-}
-
-/* ============================================================
-     * fused_gelu — DFG 融合: load+fmul+fexp+fdiv+fmul+store
-     * ============================================================ */
-op_fused_gelu: {
-    int tid_r = ip[-1].rs1;
-    uint32_t i_base = (uint32_t)ip[-1].params[0];
-    uint32_t o_base = (uint32_t)ip[-1].params[1];
-    int skip = ip[-1].skip;
-    FOR_EACH_LANE
-    {
-        uint32_t off = GPR(tid_r, _li) << 2;
-        float x = *(float *)(s->vram_ptr + i_base + off);
-        *(float *)(s->vram_ptr + o_base + off) = x * fastsigmoid(1.702f * x);
-        PC(_li) += ip[-1].pc_advance;
-    }
-    /* 等效: 1load(4B)+1store(4B)+ 3FP(fexp/fdiv/fmul) */
-    {
-        uint64_t n = __builtin_popcount(_active);
-        PERF_IF(s->stats.bytes_read += n * 4;)
-        COALESCE(ip[-1].rs1, ip[-1].imm);
-        PERF_IF(s->stats.bytes_write += n * 4;)
-        PERF_IF(s->stats.cat[CAT_MEM] += n * 2;) PERF_IF(s->stats.cat[CAT_FP] += n * 3;)
-    }
-    ip += skip;
-    NEXT();
-}
-
-/* ============================================================
-     * fused_softmax — DFG 融合: inner loop (flw+fexp+fadd+fsw)
-     * ============================================================ */
-op_fused_softmax: {
-    int src_r = ip[-1].rs1, sum_r = ip[-1].rd;
-    uint32_t src_base = (uint32_t)ip[-1].params[0];
-    uint32_t tmp_base = (uint32_t)ip[-1].params[1];
-    int skip = ip[-1].skip;
-    FOR_EACH_LANE
-    {
-        uint32_t off = GPR(src_r, _li) << 2;
-        float val = fastexp(*(float *)(s->vram_ptr + src_base + off));
-        *(float *)(s->vram_ptr + tmp_base + off) = val;
-        FR(sum_r, _li) += val;
-        PC(_li) += ip[-1].pc_advance;
-    }
-    /* 等效: 1load(4B)+1store(4B)+2FP(fexp+fadd) */
-    {
-        uint64_t n = __builtin_popcount(_active);
-        PERF_IF(s->stats.bytes_read += n * 4;)
-        COALESCE(ip[-1].rs1, ip[-1].imm);
-        PERF_IF(s->stats.bytes_write += n * 4;)
-        PERF_IF(s->stats.cat[CAT_MEM] += n * 2;) PERF_IF(s->stats.cat[CAT_FP] += n * 2;)
-    }
-    ip += skip;
+    FR(rd, 0) = mx;
     NEXT();
 }
 
@@ -916,11 +836,17 @@ op_tex: {
         int iu = (int)u, iv = (int)v;
         /* texture is 256-wide; clamp coords to VRAM bounds */
         if (iu < 0) iu = 0;
-        if (iu > 254) { iu = 254; s->error_status |= GPGPU_ERR_VRAM_FAULT; }
+        if (iu > 254) {
+            iu = 254;
+            s->error_status |= GPGPU_ERR_VRAM_FAULT;
+        }
         int max_row = (int)((s->vram_size - base) / (256 * 4)) - 1;
         if (max_row < 1) max_row = 1;
         if (iv < 0) iv = 0;
-        if (iv >= max_row) { iv = max_row - 1; s->error_status |= GPGPU_ERR_VRAM_FAULT; }
+        if (iv >= max_row) {
+            iv = max_row - 1;
+            s->error_status |= GPGPU_ERR_VRAM_FAULT;
+        }
         float fu = u - (float)iu, fv = v - (float)iv;
         float *tex = (float *)(s->vram_ptr + base);
         float s00 = tex[iv * 256 + iu], s10 = tex[iv * 256 + iu + 1];
@@ -979,7 +905,7 @@ op_flw: {
         PC(_li) += 4;
     }
     PERF_IF(s->stats.bytes_read += __builtin_popcount(_active) * 4;)
-        COALESCE(ip[-1].rs1, ip[-1].imm);
+    COALESCE(ip[-1].rs1, ip[-1].imm);
     NEXT();
 }
 op_fsw: {
@@ -1015,17 +941,16 @@ op_fsw: {
     FPBIN(fdiv_s, /)
 #undef FPBIN
 
-            /* FMA — SoA 展开 (之前 simd 缺失的变体也补全) */
-            op_fmadd_s:
+/* FMA — SoA 展开 (之前 simd 缺失的变体也补全) */
+op_fmadd_s: {
+    int rd = ip[-1].rd, rs1 = ip[-1].rs1, rs2 = ip[-1].rs2, rs3 = ip[-1].rs3;
+    FOR_EACH_LANE
     {
-        int rd = ip[-1].rd, rs1 = ip[-1].rs1, rs2 = ip[-1].rs2, rs3 = ip[-1].rs3;
-        FOR_EACH_LANE
-        {
-            FR(rd, _li) = FR(rs1, _li) * FR(rs2, _li) + FR(rs3, _li);
-        }
-        FOR_EACH_LANE PC(_li) += 4;
-        NEXT();
+        FR(rd, _li) = FR(rs1, _li) * FR(rs2, _li) + FR(rs3, _li);
     }
+    FOR_EACH_LANE PC(_li) += 4;
+    NEXT();
+}
 op_fmsub_s: {
     int rd = ip[-1].rd, rs1 = ip[-1].rs1, rs2 = ip[-1].rs2, rs3 = ip[-1].rs3;
     FOR_EACH_LANE

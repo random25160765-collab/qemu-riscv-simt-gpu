@@ -35,56 +35,24 @@ static struct {
 } safe[128];
 static int n_safe;
 #undef X
-#define X(op, pat, _t, _imm)                             \
-    do {                                                 \
-        static const char *bad[] = {"jalr",              \
-                                    "lb",                \
-                                    "lh",                \
-                                    "lw",                \
-                                    "lbu",               \
-                                    "lhu",               \
-                                    "sb",                \
-                                    "sh",                \
-                                    "sw",                \
-                                    "flw",               \
-                                    "fsw",               \
-                                    "csrrw",             \
-                                    "csrrs",             \
-                                    "csrrc",             \
-                                    "csrrwi",            \
-                                    "csrrsi",            \
-                                    "csrrci",            \
-                                    "ebreak",            \
-                                    "lr_w",              \
-                                    "sc_w",              \
-                                    "amoswap_w",         \
-                                    "amoadd_w",          \
-                                    "amoxor_w",          \
-                                    "amoand_w",          \
-                                    "amoor_w",           \
-                                    "amomin_w",          \
-                                    "amomax_w",          \
-                                    "amominu_w",         \
-                                    "amomaxu_w",         \
-                                    "fused_ld2_fma",     \
-                                    "fused_scal_mul",    \
-                                    "fused_gelu",        \
-                                    "fused_softmax",     \
-                                    "fused_matmul_loop", \
-                                    "tex",               \
-                                    "barrier",           \
-                                    "fused_vecmul",      \
-                                    NULL};               \
-        int ok = 1;                                      \
-        for (int i = 0; bad[i]; i++)                     \
-            if (!strcmp(#op, bad[i])) {                  \
-                ok = 0;                                  \
-                break;                                   \
-            }                                            \
-        if (ok && n_safe < 128) {                        \
-            safe[n_safe].pat_str = pat;                  \
-            n_safe++;                                    \
-        }                                                \
+#define X(op, pat, _t, _imm)                                                                         \
+    do {                                                                                             \
+        static const char *bad[] = {                                                                 \
+                "jalr",      "lb",       "lh",       "lw",      "lbu",      "lhu",      "sb",        \
+                "sh",        "sw",       "flw",      "fsw",     "csrrw",    "csrrs",    "csrrc",     \
+                "csrrwi",    "csrrsi",   "csrrci",   "ebreak",  "lr_w",     "sc_w",     "amoswap_w", \
+                "amoadd_w",  "amoxor_w", "amoand_w", "amoor_w", "amomin_w", "amomax_w", "amominu_w", \
+                "amomaxu_w", "vld_v",    "vst_v",    "tex",     "barrier",  NULL};                   \
+        int ok = 1;                                                                                  \
+        for (int i = 0; bad[i]; i++)                                                                 \
+            if (!strcmp(#op, bad[i])) {                                                              \
+                ok = 0;                                                                              \
+                break;                                                                               \
+            }                                                                                        \
+        if (ok && n_safe < 128) {                                                                    \
+            safe[n_safe].pat_str = pat;                                                              \
+            n_safe++;                                                                                \
+        }                                                                                            \
     } while (0)
 static void __attribute__((constructor)) _init(void)
 {

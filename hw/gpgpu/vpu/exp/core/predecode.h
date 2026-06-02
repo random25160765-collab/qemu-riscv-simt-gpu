@@ -22,11 +22,6 @@ typedef struct {
     int8_t rd, rs1, rs2, rs3;
     int32_t branch_tgt;
     uint8_t cat; /* 指令分类 (离线填充, 热路径读) */
-
-    /* fusion support */
-    int16_t skip;       /* fused: 跳过的 ThOp 数量 */
-    int16_t pc_advance; /* fused: 单 lane 的 PC 增量 */
-    int32_t params[4];  /* fused: 额外参数 (基址等) */
 } ThOp;
 
 /* trie 查找 */

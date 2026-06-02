@@ -36,7 +36,8 @@ void vpu_config_default(vpu_config_t *c)
             .warps_per_cu = 1,
             .warp_size = 32,
             .vram_mb = 64,
-            .features = {.fusion = true, .sfu = true, .lp = true, .debug = false, .trace = false, .perf = true},
+            .features =
+                    {.vpu = true, .tcu = false, .sfu = true, .lp = true, .debug = false, .trace = false, .perf = true},
     };
 }
 
@@ -70,7 +71,8 @@ int vpu_config_load(vpu_config_t *c, const char *path)
     /* features */
     lua_getfield(L, -1, "features");
     if (lua_istable(L, -1)) {
-        c->features.fusion = lbool(L, "fusion", true);
+        c->features.vpu = lbool(L, "vpu", true);
+        c->features.tcu = lbool(L, "tcu", false);
         c->features.sfu = lbool(L, "sfu", true);
         c->features.lp = lbool(L, "lp", true);
         c->features.debug = lbool(L, "debug", false);

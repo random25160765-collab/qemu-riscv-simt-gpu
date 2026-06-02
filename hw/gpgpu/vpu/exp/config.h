@@ -12,7 +12,7 @@
 #include <stdbool.h>
 
 typedef struct {
-    bool fusion, sfu, lp, debug, trace, perf;
+    bool vpu, tcu, sfu, lp, debug, trace, perf;
 } vpu_features_t;
 
 typedef struct {

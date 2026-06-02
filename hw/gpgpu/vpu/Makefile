@@ -28,4 +28,7 @@ gen:
 clean:
 	rm -rf $(BUILDDIR) $(TARGET)
 
-.PHONY: all clean gen
+count:
+	@cd exp && $(MAKE) count
+
+.PHONY: all clean gen count

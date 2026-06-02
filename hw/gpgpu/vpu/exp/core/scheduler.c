@@ -26,7 +26,6 @@
 #include "dispatch.h"
 #include "memory.h"
 #include "soa.h"
-#include "fusion.h"
 
 /* ============================================================
  * 预译码
@@ -202,17 +201,6 @@ int scheduler_run_kernel(GPGPUState *s)
     uint32_t ksize = s->kern_size ? s->kern_size : 4096;
     ThOp *code = scheduler_predecode(s, kern_addr, ksize, &tcount);
     if (!code) return -1;
-
-    /* DFG fusion pass (cold path, 一次 kernel launch) */
-    if (s->cfg.features.fusion) {
-        int fused_count = 0;
-        ThOp *fused = fusion_pass(code, tcount, &fused_count);
-        if (fused) {
-            free(code);
-            code = fused;
-            tcount = fused_count;
-        }
-    }
 
     /* 分类: 总是设置 code[i].cat (NEXT() 热路径读取) */
     for (int i = 0; i < tcount; i++) {

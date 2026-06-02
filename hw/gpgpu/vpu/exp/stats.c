@@ -42,10 +42,10 @@ void stats_snapshot(const GPGPUState *s, const char *name, double us, uint64_t f
     memcpy(e->cat_static, s->stats.cat_static, sizeof(e->cat_static));
     e->branches = s->stats.total_branches;
     e->diverges = s->stats.simt_diverges;
-    e->cache_hits   = s->stats.cache_hits;
+    e->cache_hits = s->stats.cache_hits;
     e->cache_misses = s->stats.cache_misses;
-    e->coal_ops     = s->stats.coal_ops;
-    e->coal_total   = s->stats.coal_total;
+    e->coal_ops = s->stats.coal_ops;
+    e->coal_total = s->stats.coal_total;
     e->bench = bench;
     e->pass = pass;
 }
@@ -65,13 +65,16 @@ static char *fmt_n(char *buf, size_t sz, double v)
 static char *fmt_mix(char *buf, size_t sz, const uint64_t cat[4])
 {
     uint64_t tot = 0;
-    for (int i = 0; i < 4; i++) tot += cat[i];
-    if (tot == 0) { buf[0] = '\0'; return buf; }
-    static const char *cn[] = {"ALU","FP ","MEM","BR "};
+    for (int i = 0; i < 4; i++)
+        tot += cat[i];
+    if (tot == 0) {
+        buf[0] = '\0';
+        return buf;
+    }
+    static const char *cn[] = {"ALU", "FP ", "MEM", "BR "};
     /* fixed: 4×(4+3) = 28 chars, always all four */
-    snprintf(buf, sz, "%s%2.0f%% %s%2.0f%% %s%2.0f%% %s%2.0f%%",
-             cn[0], 100.0*cat[0]/tot, cn[1], 100.0*cat[1]/tot,
-             cn[2], 100.0*cat[2]/tot, cn[3], 100.0*cat[3]/tot);
+    snprintf(buf, sz, "%s%2.0f%% %s%2.0f%% %s%2.0f%% %s%2.0f%%", cn[0], 100.0 * cat[0] / tot, cn[1],
+             100.0 * cat[1] / tot, cn[2], 100.0 * cat[2] / tot, cn[3], 100.0 * cat[3] / tot);
     return buf;
 }
 
@@ -157,9 +160,8 @@ void stats_render(void)
 
         if (has_div) {
             if (e->branches > 0 && e->diverges > 0)
-                printf(" " KRED "%lu/%lu(%.0f%%)" KNRM,
-                       (unsigned long)e->diverges, (unsigned long)e->branches,
-                       100.0*e->diverges/e->branches);
+                printf(" " KRED "%lu/%lu(%.0f%%)" KNRM, (unsigned long)e->diverges, (unsigned long)e->branches,
+                       100.0 * e->diverges / e->branches);
             else
                 printf("  %8s", "");
         }
@@ -167,14 +169,14 @@ void stats_render(void)
         if (has_cache) {
             uint64_t tot = e->cache_hits + e->cache_misses;
             if (tot > 0)
-                printf(" %6.0f%%", 100.0*e->cache_hits/tot);
+                printf(" %6.0f%%", 100.0 * e->cache_hits / tot);
             else
                 printf(" %7s", "");
         }
 
         if (has_coal) {
             if (e->coal_total > 0)
-                printf(" %6.0f%%", 100.0*e->coal_ops/e->coal_total);
+                printf(" %6.0f%%", 100.0 * e->coal_ops / e->coal_total);
             else
                 printf(" %7s", "");
         }
