@@ -378,6 +378,28 @@ static int c_vadd_int(GPGPUState *s)
     return 0;
 }
 
+/* --- RVV VL=16 test: only first 16 elements processed --- */
+static void s_vadd_vl(GPGPUState *s)
+{
+    uint32_t A = alloc_map(s, PTR_SLOT_A, 32 * 4);
+    uint32_t B = alloc_map(s, PTR_SLOT_B, 32 * 4);
+    uint32_t C = alloc_map(s, PTR_SLOT_C, 32 * 4);
+    for (int i = 0; i < 32; i++) {
+        ((int32_t *)(s->vram_ptr + A))[i] = i;
+        ((int32_t *)(s->vram_ptr + B))[i] = i * 2;
+        ((int32_t *)(s->vram_ptr + C))[i] = -1; /* sentinel */
+    }
+}
+static int c_vadd_vl(GPGPUState *s)
+{
+    uint32_t C = vram_ptr_read(s, PTR_SLOT_C);
+    for (int i = 0; i < 16; i++)
+        if (((int32_t *)(s->vram_ptr + C))[i] != i * 3) return 1;
+    for (int i = 16; i < 32; i++)
+        if (((int32_t *)(s->vram_ptr + C))[i] != -1) return 1; /* unchanged */
+    return 0;
+}
+
 /* --- registration --- */
 void func_tests_register(void)
 {
@@ -402,6 +424,7 @@ void func_tests_register(void)
     /* TCU single-warp: M=1,K=4,N=32, all-ones → C=4 */
     F("MMA 1x4x32", "kernels/matmul.bin", 1, 1, 1, 32, 1, 1, s_mma_f, c_mma_f);
     F("Vec Add Int", "kernels/vadd_int.bin", 1, 1, 1, 32, 1, 1, s_vadd_int, c_vadd_int);
+    F("Vec Add VL=16", "kernels/vadd_vl.bin", 1, 1, 1, 32, 1, 1, s_vadd_vl, c_vadd_vl);
 
 #undef F
 }

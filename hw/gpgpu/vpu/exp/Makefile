@@ -118,4 +118,4 @@ help:
 	@echo "make clean        — remove build artifacts"
 	@echo "make count        — count lines of code"
 	@echo "make format       — auto-format all C/H files"
-	@echo "make format-check — check formatting (CI)"
+	@echo "make format-check — check formatting (dry-run)"

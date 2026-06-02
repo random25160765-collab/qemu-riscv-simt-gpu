@@ -154,6 +154,7 @@ MNEMONIC_MAP['vmerge.vvm'] = ('RVV', 0b010111, 0)
 # RVV unit-stride load/store (funct3=001/010, funct6=0, vm=1)
 MNEMONIC_MAP['vle32.v'] = ('RVVL', 0b000000, 1)   # ('RVVL', funct6, vm)
 MNEMONIC_MAP['vse32.v'] = ('RVVS', 0b000000, 1)   # ('RVVS', funct6, vm)
+MNEMONIC_MAP['vsetvli'] = ('VSET', 0, 0)           # rd(GPR), rs1(GPR), special encoding
 
 # RVV OPFVV (funct3=001) and OPFVF (funct3=101)
 MNEMONIC_MAP['vfmul.vv'] = ('RVV', 0b100100, 1)   # vd, vs1, vs2
@@ -214,6 +215,15 @@ def assemble(name, operands):
         rs1 = FPR.get(cleaned[2]) if cleaned[2] in FPR else GPR.get(cleaned[2])
         if vd is None or vs2 is None or rs1 is None: return None
         return (funct6 << 26) | ((vm & 1) << 25) | ((vs2 & 0x1F) << 20) | ((rs1 & 0x1F) << 15) | (5 << 12) | ((vd & 0x1F) << 7) | 0x57
+
+    # vsetvli: vsetvli rd, rs1 → rd=GPR, rs1=GPR, zimm=0, funct3=7, opcode=0x57
+    if info[0] == 'VSET':
+        cleaned = [strip_paren(op) for op in operands if strip_paren(op) and strip_paren(op) != ',']
+        if len(cleaned) < 2: return None
+        rd  = GPR.get(cleaned[0])
+        rs1 = GPR.get(cleaned[1])
+        if rd is None or rs1 is None: return None
+        return ((rs1 & 0x1F) << 15) | (7 << 12) | ((rd & 0x1F) << 7) | 0x57
 
     # RVV unary: vfsig.v vd, vs1 → vd=VPR, vs1=VPR
     if info[0] == 'RVVU':

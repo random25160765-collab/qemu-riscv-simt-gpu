@@ -137,6 +137,7 @@ static void exec_block(BlockContext *blk)
     SIMTFrame(*stk)[32] = calloc(blk->num_warps, 32 * sizeof(SIMTFrame));
     int *sdepth = calloc(blk->num_warps, sizeof(int));
     float(*mma)[8 * 32] = calloc(blk->num_warps, 8 * 32 * 4);
+    uint32_t *vl_arr = calloc(blk->num_warps, sizeof(uint32_t));
     EngineContext *ctxs = calloc(blk->num_warps, sizeof(EngineContext));
     int *resume_pc = calloc(blk->num_warps, sizeof(int));
 
@@ -146,6 +147,7 @@ static void exec_block(BlockContext *blk)
         if (nt > GPGPU_WARP_SIZE) nt = GPGPU_WARP_SIZE;
         scheduler_init_warp(&warps[w], blk->kern_addr, tb, blk->block_id, nt, w, blk->blk_linear);
         aos_to_soa(&warps[w], gpr[w], fpr[w], vpr ? vpr[w] : NULL, pc[w], mh[w], fcsr[w]);
+        vl_arr[w] = 32;
         resume_pc[w] = -1;
         ctxs[w] = (EngineContext){
                 .s = s,
@@ -170,8 +172,8 @@ static void exec_block(BlockContext *blk)
                 continue;
             }
 
-            int ret = engine_exec(blk->code, blk->tcount, &ctxs[w], gpr[w], fpr[w], vpr ? vpr[w] : NULL, pc[w], mh[w],
-                                  fcsr[w], stk[w], &sdepth[w], resume_pc[w], mma[w]);
+            int ret = engine_exec(blk->code, blk->tcount, &ctxs[w], gpr[w], fpr[w], vpr ? vpr[w] : NULL, &vl_arr[w],
+                                  pc[w], mh[w], fcsr[w], stk[w], &sdepth[w], resume_pc[w], mma[w]);
 
             if (ret & 0x10000) {
                 /* 到达 barrier: 保存状态 */
@@ -213,6 +215,7 @@ static void exec_block(BlockContext *blk)
     free(gpr);
     free(fpr);
     free(vpr);
+    free(vl_arr);
     free(pc);
     free(mh);
     free(fcsr);

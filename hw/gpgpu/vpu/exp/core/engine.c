@@ -199,11 +199,13 @@ void engine_resolve_handlers(ThOp *code, int tcount)
  * 引擎入口
  * ============================================================ */
 int engine_exec(ThOp *code, int tcount, const EngineContext *ctx, uint32_t gpr[32 * 32], uint32_t fpr[32 * 32],
-                uint32_t *vpr, uint32_t _pc[32], uint32_t _mhartid[32], uint32_t _fcsr[32], SIMTFrame *_stk_ext,
+                uint32_t *vpr, uint32_t *vl, uint32_t _pc[32], uint32_t _mhartid[32], uint32_t _fcsr[32],
+                SIMTFrame *_stk_ext,
                 int *_sdepth_ext, int resume_pc, float _mma_acc[8 * 32])
 {
     ThOp *ip;
     uint32_t _active = ctx->active;
+    uint32_t _vl = vl ? *vl : 32;
     GPGPUState *s = ctx->s;
     (void)tcount;
 
@@ -883,7 +885,7 @@ op_vredmax_v: {
         uint32_t _vm = (ip[-1].inst >> 25) & 1;                                                     \
         FOR_EACH_LANE                                                                               \
         {                                                                                           \
-            if (_vm || (*(uint32_t *)&VR(0, _li) & 1))                                              \
+            if ((uint32_t)_li < _vl && (_vm || (*(uint32_t *)&VR(0, _li) & 1)))                                              \
                 *(int32_t *)&VR(vd, _li) = *(int32_t *)&VR(vs1, _li) op * (int32_t *)&VR(vs2, _li); \
             PC(_li) += 4;                                                                           \
         }                                                                                           \
@@ -896,7 +898,7 @@ op_vredmax_v: {
         uint32_t _vm = (ip[-1].inst >> 25) & 1;                                                                \
         FOR_EACH_LANE                                                                                          \
         {                                                                                                      \
-            if (_vm || (*(uint32_t *)&VR(0, _li) & 1))                                                         \
+            if ((uint32_t)_li < _vl && (_vm || (*(uint32_t *)&VR(0, _li) & 1)))                                                         \
                 *(int32_t *)&VR(vd, _li) = (*(int32_t *)&VR(vs1, _li) op * (int32_t *)&VR(vs2, _li)) ? -1 : 0; \
             PC(_li) += 4;                                                                                      \
         }                                                                                                      \
@@ -909,7 +911,7 @@ op_vredmax_v: {
         uint32_t _vm = (ip[-1].inst >> 25) & 1;                                                                  \
         FOR_EACH_LANE                                                                                            \
         {                                                                                                        \
-            if (_vm || (*(uint32_t *)&VR(0, _li) & 1))                                                           \
+            if ((uint32_t)_li < _vl && (_vm || (*(uint32_t *)&VR(0, _li) & 1)))                                                           \
                 *(int32_t *)&VR(vd, _li) = (*(uint32_t *)&VR(vs1, _li) op * (uint32_t *)&VR(vs2, _li)) ? -1 : 0; \
             PC(_li) += 4;                                                                                        \
         }                                                                                                        \
@@ -922,7 +924,7 @@ op_vredmax_v: {
         uint32_t _vm = (ip[-1].inst >> 25) & 1;                                 \
         FOR_EACH_LANE                                                           \
         {                                                                       \
-            if (_vm || (*(uint32_t *)&VR(0, _li) & 1)) {                        \
+            if ((uint32_t)_li < _vl && (_vm || (*(uint32_t *)&VR(0, _li) & 1))) {                        \
                 uint32_t _shamt = *(uint32_t *)&VR(vs2, _li) & 31;              \
                 *(int32_t *)&VR(vd, _li) = *(int32_t *)&VR(vs1, _li) op _shamt; \
             }                                                                   \
@@ -951,7 +953,7 @@ op_vsra_vv: {
     uint32_t vm = (ip[-1].inst >> 25) & 1;
     FOR_EACH_LANE
     {
-        if (vm || (*(uint32_t *)&VR(0, _li) & 1))
+        if ((uint32_t)_li < _vl && (vm || (*(uint32_t *)&VR(0, _li) & 1)))
             *(int32_t *)&VR(vd, _li) = *(int32_t *)&VR(vs1, _li) >> (*(uint32_t *)&VR(vs2, _li) & 31);
         PC(_li) += 4;
     }
@@ -962,7 +964,7 @@ op_vmin_vv: {
     uint32_t vm = (ip[-1].inst >> 25) & 1;
     FOR_EACH_LANE
     {
-        if (vm || (*(uint32_t *)&VR(0, _li) & 1)) {
+        if ((uint32_t)_li < _vl && (vm || (*(uint32_t *)&VR(0, _li) & 1))) {
             int32_t a = *(int32_t *)&VR(vs1, _li), b = *(int32_t *)&VR(vs2, _li);
             *(int32_t *)&VR(vd, _li) = a < b ? a : b;
         }
@@ -975,7 +977,7 @@ op_vminu_vv: {
     uint32_t vm = (ip[-1].inst >> 25) & 1;
     FOR_EACH_LANE
     {
-        if (vm || (*(uint32_t *)&VR(0, _li) & 1)) {
+        if ((uint32_t)_li < _vl && (vm || (*(uint32_t *)&VR(0, _li) & 1))) {
             uint32_t a = *(uint32_t *)&VR(vs1, _li), b = *(uint32_t *)&VR(vs2, _li);
             *(uint32_t *)&VR(vd, _li) = a < b ? a : b;
         }
@@ -988,7 +990,7 @@ op_vmax_vv: {
     uint32_t vm = (ip[-1].inst >> 25) & 1;
     FOR_EACH_LANE
     {
-        if (vm || (*(uint32_t *)&VR(0, _li) & 1)) {
+        if ((uint32_t)_li < _vl && (vm || (*(uint32_t *)&VR(0, _li) & 1))) {
             int32_t a = *(int32_t *)&VR(vs1, _li), b = *(int32_t *)&VR(vs2, _li);
             *(int32_t *)&VR(vd, _li) = a > b ? a : b;
         }
@@ -1001,7 +1003,7 @@ op_vmaxu_vv: {
     uint32_t vm = (ip[-1].inst >> 25) & 1;
     FOR_EACH_LANE
     {
-        if (vm || (*(uint32_t *)&VR(0, _li) & 1)) {
+        if ((uint32_t)_li < _vl && (vm || (*(uint32_t *)&VR(0, _li) & 1))) {
             uint32_t a = *(uint32_t *)&VR(vs1, _li), b = *(uint32_t *)&VR(vs2, _li);
             *(uint32_t *)&VR(vd, _li) = a > b ? a : b;
         }
@@ -1013,7 +1015,8 @@ op_vmerge_vvm: {
     int vd = ip[-1].rd, vs1 = ip[-1].rs1, vs2 = ip[-1].rs2;
     FOR_EACH_LANE
     {
-        VR(vd, _li) = (*(uint32_t *)&VR(0, _li) & 1) ? VR(vs2, _li) : VR(vs1, _li);
+        if ((uint32_t)_li < _vl)
+            VR(vd, _li) = (*(uint32_t *)&VR(0, _li) & 1) ? VR(vs2, _li) : VR(vs1, _li);
         PC(_li) += 4;
     }
     NEXT();
@@ -1024,7 +1027,7 @@ op_vle32_v: {
     uint32_t vm = (ip[-1].inst >> 25) & 1;
     FOR_EACH_LANE
     {
-        if (vm || (*(uint32_t *)&VR(0, _li) & 1)) {
+        if ((uint32_t)_li < _vl && (vm || (*(uint32_t *)&VR(0, _li) & 1))) {
             uint32_t a = GPR(rs1, _li) + _li * 4;
             VR(vd, _li) = (a + 4 <= s->vram_size) ? *(float *)(s->vram_ptr + a) : 0.0f;
         }
@@ -1037,7 +1040,7 @@ op_vse32_v: {
     uint32_t vm = (ip[-1].inst >> 25) & 1;
     FOR_EACH_LANE
     {
-        if (vm || (*(uint32_t *)&VR(0, _li) & 1)) {
+        if ((uint32_t)_li < _vl && (vm || (*(uint32_t *)&VR(0, _li) & 1))) {
             uint32_t a = GPR(rs1, _li) + _li * 4;
             if (a + 4 <= s->vram_size) *(float *)(s->vram_ptr + a) = VR(vs3, _li);
         }
@@ -1051,7 +1054,7 @@ op_vfmul_vv: {
     uint32_t vm = (ip[-1].inst >> 25) & 1;
     FOR_EACH_LANE
     {
-        if (vm || (*(uint32_t *)&VR(0, _li) & 1))
+        if ((uint32_t)_li < _vl && (vm || (*(uint32_t *)&VR(0, _li) & 1)))
             VR(vd, _li) = VR(vs1, _li) * VR(vs2, _li);
         PC(_li) += 4;
     }
@@ -1063,18 +1066,38 @@ op_vfmul_vf: {
     uint32_t vm = (ip[-1].inst >> 25) & 1;
     FOR_EACH_LANE
     {
-        if (vm || (*(uint32_t *)&VR(0, _li) & 1))
+        if ((uint32_t)_li < _vl && (vm || (*(uint32_t *)&VR(0, _li) & 1)))
             VR(vd, _li) = VR(vs2, _li) * sc;
         PC(_li) += 4;
     }
     NEXT();
 }
     /* ============================================================
+     * vsetvli — 设置向量长度 (opcode 0x57, funct3=111)
+     * ============================================================ */
+op_vsetvli: {
+    int rd = ip[-1].rd, rs1 = ip[-1].rs1;
+    uint32_t avl = GPR(rs1, 0);
+#define RVV_VLMAX 32
+    uint32_t new_vl = avl ? (avl < RVV_VLMAX ? avl : RVV_VLMAX) : RVV_VLMAX;
+    if (vl) *vl = new_vl;
+    _vl = new_vl;
+    FOR_EACH_LANE
+    {
+        GPR(rd, _li) = new_vl;
+        PC(_li) += 4;
+    }
+    NEXT();
+#undef RVV_VLMAX
+}
+
+    /* ============================================================
      * TCU 矩阵指令 — warp-MMA (custom-1 opcode 0x2B, funct3=111)
      * mma 配置是 warp 本地变量, 避免多 warp 并发写入 s->mma 的 data race
      * ============================================================ */
 op_mma_cfg: {
     int rd = ip[-1].rd, rs1 = ip[-1].rs1, rs2 = ip[-1].rs2;
+    (void)rd; (void)rs1; (void)rs2;
     FOR_EACH_LANE PC(_li) += 4;
     NEXT();
 }

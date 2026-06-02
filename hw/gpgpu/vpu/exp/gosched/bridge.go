@@ -106,11 +106,12 @@ func InitWarp(warp *C.GPGPUWarp, kernAddr uint32, tidBase uint32,
 
 // ExecWarp calls engine_exec once. Returns the raw C int.
 func ExecWarp(code *C.ThOp, tcount int, ctx *C.EngineContext,
-	gpr, fpr, vpr, pc, mh, fcsr unsafe.Pointer,
+	gpr, fpr, vpr unsafe.Pointer, vl *C.uint32_t,
+	pc, mh, fcsr unsafe.Pointer,
 	stk *C.SIMTFrame, sdepth *C.int, resumePc int,
 	mma unsafe.Pointer) int {
 	return int(C.engine_exec(code, C.int(tcount), ctx,
-		(*C.uint32_t)(gpr), (*C.uint32_t)(fpr), (*C.uint32_t)(vpr),
+		(*C.uint32_t)(gpr), (*C.uint32_t)(fpr), (*C.uint32_t)(vpr), vl,
 		(*C.uint32_t)(pc), (*C.uint32_t)(mh), (*C.uint32_t)(fcsr),
 		stk, sdepth, C.int(resumePc),
 		(*C.float)(mma)))

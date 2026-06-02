@@ -150,6 +150,9 @@ func runWarp(
 	mh, fcsr := soa.mh, soa.fcsr
 	mma, stk := soa.mma, soa.stk
 	eCtx, sdepth := soa.ctx, soa.sdepth
+	vl := (*C.uint32_t)(C.calloc(1, 4))
+	*vl = 32 // VL=32 by default
+	defer C.free(unsafe.Pointer(vl))
 
 	resumePc := C.int(-1)
 	slot := slotGet()
@@ -168,7 +171,7 @@ func runWarp(
 
 		t0 = time.Now()
 		ret := C.engine_exec(code, C.int(tcount), eCtx,
-			(*C.uint32_t)(gpr), (*C.uint32_t)(fpr), (*C.uint32_t)(vpr),
+			(*C.uint32_t)(gpr), (*C.uint32_t)(fpr), (*C.uint32_t)(vpr), vl,
 			(*C.uint32_t)(pc), (*C.uint32_t)(mh), (*C.uint32_t)(fcsr),
 			stk, sdepth, resumePc, (*C.float)(mma))
 		ws.EngineTime += time.Since(t0)
@@ -322,7 +325,7 @@ func RunKernel(s *C.GPGPUState, launch KernelLaunch, ctx context.Context) error 
 		for w := 0; w < warpsPerBlock; w++ {
 			var wg sync.WaitGroup
 			bars := make([]*Barrier, totalBlocks)
-			for bi, b := range blocks {
+			for bi := range blocks {
 				bars[bi] = newBarrier(warpsPerBlock)
 			}
 			for bi, b := range blocks {
@@ -331,6 +334,7 @@ func RunKernel(s *C.GPGPUState, launch KernelLaunch, ctx context.Context) error 
 			}
 			wg.Wait()
 		}
+		return nil // Wavefront collects internally, skip outer loop
 
 	case SchedGTO:
 		// Greedy phase: semaphore 满 → 第一批 warps 并发
@@ -349,18 +353,18 @@ func RunKernel(s *C.GPGPUState, launch KernelLaunch, ctx context.Context) error 
 				launched++
 			}
 		}
-		// Phase 2: oldest-first — 剩余 warps 单个发射, 每完成一个发射下一个
+		// Phase 2: oldest-first — 等一个完成 → 发射下一个 oldest
 		for i := firstWave; i < totalWarps; i++ {
 			if err := <-errCh; err != nil { return err }
-			// flat warp index → block + warp
 			bi := i / warpsPerBlock
 			w := i % warpsPerBlock
 			launchWarp(blocks[bi], w, nil, bars[bi])
 		}
-		// drain remaining errCh
-		for i := 0; i < totalWarps; i++ {
+		// drain remaining firstWave results
+		for i := 0; i < firstWave; i++ {
 			if err := <-errCh; err != nil { return err }
 		}
+		return nil // GTO collects internally, skip outer loop
 
 	case SchedGreedy:
 		// 每个 block 内部 warp 并行, block 间串行

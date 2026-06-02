@@ -37,6 +37,7 @@ typedef struct {
     uint32_t block_id[3];  /* 所属 block ID */
     uint32_t warp_id;      /* warp 编号 */
     uint32_t thread_mask;  /* 活跃线程掩码 */
+    uint32_t vl;           /* 向量长度 (vsetvli 设置, 默认 32) */
 } EngineContext;
 
 /*
@@ -53,6 +54,7 @@ typedef struct {
  *   gpr     — SoA 通用寄存器 [32 regs × 32 lanes]
  *   fpr     — SoA 浮点寄存器 [32 regs × 32 lanes]
  *   vpr     — SoA 向量寄存器 [32 regs × 32 lanes] (NULL if no RVV)
+ *   vl      — 向量长度 (in/out, 由 vsetvli 修改)
  *   pc      — 32 个 lane 的程序计数器
  *
  * 返回:
@@ -60,8 +62,8 @@ typedef struct {
  *   -1 = 非法指令
  */
 int engine_exec(ThOp *code, int tcount, const EngineContext *ctx, uint32_t gpr[32 * 32], uint32_t fpr[32 * 32],
-                uint32_t *vpr, uint32_t pc[32], uint32_t mhartid[32], uint32_t fcsr[32], SIMTFrame *_stk, int *_sdepth,
-                int resume_pc, float mma_acc[8 * 32]);
+                uint32_t *vpr, uint32_t *vl, uint32_t pc[32], uint32_t mhartid[32], uint32_t fcsr[32], SIMTFrame *_stk,
+                int *_sdepth, int resume_pc, float mma_acc[8 * 32]);
 
 /*
  * ============================================================================
