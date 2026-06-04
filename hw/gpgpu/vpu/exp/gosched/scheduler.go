@@ -18,11 +18,12 @@ import (
 // ── SoA memory pool ────────────────────────────────────────
 
 type soaSet struct {
-	warp                                          *C.GPGPUWarp
-	ctx                                           *C.EngineContext
+	warp *C.GPGPUWarp
+	ctx  *C.EngineContext
 	gpr, fpr, vpr, pc, mh, fcsr, mma unsafe.Pointer
-	stk                                           *C.SIMTFrame
-	sdepth                                        *C.int
+	stk  *C.SIMTFrame
+	sdepth *C.int
+	sb   *C.Scoreboard // per-warp scoreboard (nil if disabled)
 }
 
 const soaPoolSize = 256
@@ -43,6 +44,7 @@ func init() {
 		set.mma  = C.calloc(1, C.ulong(soaMmaSz))
 		set.stk  = (*C.SIMTFrame)(C.calloc(1, C.ulong(simtStkSz)))
 		set.sdepth = (*C.int)(C.calloc(1, 4))
+		set.sb = (*C.Scoreboard)(C.calloc(1, C.ulong(unsafe.Sizeof(C.Scoreboard{}))))
 		soaPool <- set
 	}
 }
@@ -58,6 +60,8 @@ type WarpSlot struct {
 	sdepth                            C.int
 	active                            uint32
 	resumePc                          int
+	sbGprBusy, sbFprBusy              uint32 // scoreboard snapshot
+	sbStalled                         bool
 }
 
 var slotPool = make(chan *WarpSlot, soaPoolSize*2)
@@ -81,7 +85,7 @@ func slotGet() *WarpSlot  { return <-slotPool }
 func slotPut(s *WarpSlot) { slotPool <- s }
 
 func (s *WarpSlot) save(gpr, fpr, vpr, pc, mh, fcsr, mma unsafe.Pointer,
-	stk *C.SIMTFrame, sdepth C.int, active uint32, rpc int) {
+	stk *C.SIMTFrame, sdepth C.int, active uint32, rpc int, sb *C.Scoreboard) {
 	C.memcpy(s.gpr, gpr, C.ulong(soaGprSz))
 	C.memcpy(s.fpr, fpr, C.ulong(soaFprSz))
 	C.memcpy(s.vpr, vpr, C.ulong(soaVprSz))
@@ -93,10 +97,15 @@ func (s *WarpSlot) save(gpr, fpr, vpr, pc, mh, fcsr, mma unsafe.Pointer,
 	s.sdepth = sdepth
 	s.active = active
 	s.resumePc = rpc
+	if sb != nil {
+		s.sbGprBusy = uint32(sb.gpr_busy)
+		s.sbFprBusy = uint32(sb.fpr_busy)
+		s.sbStalled = bool(sb.stalled)
+	}
 }
 
 func (s *WarpSlot) restore(gpr, fpr, vpr, pc, mh, fcsr, mma unsafe.Pointer,
-	stk *C.SIMTFrame, sdepth *C.int, active *uint32, rpc *int) {
+	stk *C.SIMTFrame, sdepth *C.int, active *uint32, rpc *int, sb *C.Scoreboard) {
 	C.memcpy(gpr, s.gpr, C.ulong(soaGprSz))
 	C.memcpy(fpr, s.fpr, C.ulong(soaFprSz))
 	C.memcpy(vpr, s.vpr, C.ulong(soaVprSz))
@@ -108,6 +117,11 @@ func (s *WarpSlot) restore(gpr, fpr, vpr, pc, mh, fcsr, mma unsafe.Pointer,
 	*sdepth = s.sdepth
 	*active = s.active
 	*rpc = s.resumePc
+	if sb != nil {
+		sb.gpr_busy = C.uint32_t(s.sbGprBusy)
+		sb.fpr_busy = C.uint32_t(s.sbFprBusy)
+		sb.stalled = C._Bool(s.sbStalled)
+	}
 }
 
 // ── Barrier ────────────────────────────────────────────────
@@ -145,6 +159,7 @@ func runWarp(
 	soa *soaSet,
 	bar *Barrier,
 	errCh chan<- error,
+	sbOn bool,
 ) {
 	gpr, fpr, vpr, pc := soa.gpr, soa.fpr, soa.vpr, soa.pc
 	mh, fcsr := soa.mh, soa.fcsr
@@ -153,6 +168,9 @@ func runWarp(
 	vl := (*C.uint32_t)(C.calloc(1, 4))
 	*vl = 32 // VL=32 by default
 	defer C.free(unsafe.Pointer(vl))
+
+	wsb := soa.sb // always allocated, nil if sb disabled
+	if !sbOn { wsb = nil }
 
 	resumePc := C.int(-1)
 	slot := slotGet()
@@ -173,7 +191,7 @@ func runWarp(
 		ret := C.engine_exec(code, C.int(tcount), eCtx,
 			(*C.uint32_t)(gpr), (*C.uint32_t)(fpr), (*C.uint32_t)(vpr), vl,
 			(*C.uint32_t)(pc), (*C.uint32_t)(mh), (*C.uint32_t)(fcsr),
-			stk, sdepth, resumePc, (*C.float)(mma))
+			stk, sdepth, resumePc, (*C.float)(mma), wsb)
 		ws.EngineTime += time.Since(t0)
 
 		if ret == 0 {
@@ -186,9 +204,20 @@ func runWarp(
 			errCh <- fmt.Errorf("warp %d: illegal instruction", eCtx.warp_id)
 			return
 		}
-		if ret&0x10000 != 0 {
+		if ret&ScoreboardStall != 0 {
 			rpc := int(ret & 0xFFFF)
-			slot.save(gpr, fpr, vpr, pc, mh, fcsr, mma, stk, *sdepth, uint32(eCtx.active), rpc)
+			slot.save(gpr, fpr, vpr, pc, mh, fcsr, mma, stk, *sdepth, uint32(eCtx.active), rpc, wsb)
+			ws.SBStalls++
+
+			var active uint32
+			slot.restore(gpr, fpr, vpr, pc, mh, fcsr, mma, stk, sdepth, &active, &rpc, wsb)
+			eCtx.active = C.uint32_t(active)
+			resumePc = C.int(rpc)
+			continue // yield: Go scheduler may switch goroutines
+		}
+		if ret&BarrierRet != 0 {
+			rpc := int(ret & 0xFFFF)
+			slot.save(gpr, fpr, vpr, pc, mh, fcsr, mma, stk, *sdepth, uint32(eCtx.active), rpc, wsb)
 
 			t0 = time.Now()
 			bar.Wait()
@@ -196,7 +225,7 @@ func runWarp(
 			ws.Barriers++
 
 			var active uint32
-			slot.restore(gpr, fpr, vpr, pc, mh, fcsr, mma, stk, sdepth, &active, &rpc)
+			slot.restore(gpr, fpr, vpr, pc, mh, fcsr, mma, stk, sdepth, &active, &rpc, wsb)
 			eCtx.active = C.uint32_t(active)
 			resumePc = C.int(rpc)
 			continue
@@ -231,12 +260,13 @@ func (p SchedPolicy) String() string {
 // ── Kernel launch descriptor ──────────────────────────────
 
 type KernelLaunch struct {
-	KernAddr uint32
-	GridDim  [3]uint32
-	BlockDim [3]uint32
-	ShmSize  uint32
-	Policy   SchedPolicy
-	Timeout  time.Duration
+	KernAddr   uint32
+	GridDim    [3]uint32
+	BlockDim   [3]uint32
+	ShmSize    uint32
+	Policy     SchedPolicy
+	Timeout    time.Duration
+	Scoreboard bool // enable register scoreboard (per-warp)
 }
 
 // ── Kernel runner ──────────────────────────────────────────
@@ -312,7 +342,7 @@ func RunKernel(s *C.GPGPUState, launch KernelLaunch, ctx context.Context) error 
 			*soa.ctx = MakeContext(s, uint32(soa.warp.active_mask), b.shm, launch.ShmSize,
 				tidBase, b.id, uint32(w))
 
-			runWarp(ctx, code, tcount, soa, bar, errCh)
+			runWarp(ctx, code, tcount, soa, bar, errCh, launch.Scoreboard)
 
 			SoaToAos(soa.warp, soa.gpr, soa.fpr, soa.vpr, soa.pc, soa.mh, soa.fcsr)
 		}(w, tidBase, nThr)

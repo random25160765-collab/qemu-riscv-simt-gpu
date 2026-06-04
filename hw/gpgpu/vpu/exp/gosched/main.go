@@ -25,6 +25,7 @@ func init() {
 func main() {
 	policyName := flag.String("policy", "rr", "scheduling policy: rr|greedy|gto|wave")
 	timeoutMs := flag.Int("timeout", 0, "warp timeout in ms (0=disabled)")
+	sbFlag := flag.Bool("scoreboard", false, "enable register scoreboard hazard detection")
 	flag.Parse()
 
 	if len(flag.Args()) < 1 {
@@ -64,8 +65,8 @@ func main() {
 		os.Exit(1)
 	}
 
-	fmt.Printf("VRAM: %d MB | %d CU x %d warps/CU x %d lanes/warp | policy=%s timeout=%v\n\n",
-		s.cfg.vram_mb, s.cfg.num_cus, s.cfg.warps_per_cu, s.warp_size, policy, timeout)
+	fmt.Printf("VRAM: %d MB | %d CU x %d warps/CU x %d lanes/warp | policy=%s timeout=%v sb=%v\n\n",
+		s.cfg.vram_mb, s.cfg.num_cus, s.cfg.warps_per_cu, s.warp_size, policy, timeout, *sbFlag)
 
 	data, err := os.ReadFile(kernPath)
 	if err != nil || len(data) == 0 {
@@ -78,11 +79,12 @@ func main() {
 	s.kern_size = C.uint32_t(len(data))
 
 	launch := KernelLaunch{
-		KernAddr: kernAddr,
-		GridDim:  [3]uint32{gridX, gridY, gridZ},
-		BlockDim: [3]uint32{blockX, blockY, blockZ},
-		Policy:   policy,
-		Timeout:  timeout,
+		KernAddr:   kernAddr,
+		GridDim:    [3]uint32{gridX, gridY, gridZ},
+		BlockDim:   [3]uint32{blockX, blockY, blockZ},
+		Policy:     policy,
+		Timeout:    timeout,
+		Scoreboard: *sbFlag,
 	}
 
 	fmt.Printf("Launch: grid=(%d,%d,%d) block=(%d,%d,%d)\n",
@@ -116,6 +118,10 @@ func main() {
 	if stats.BarrierWaits > 0 {
 		fmt.Printf("Barriers: %d waits, avg wait %v\n",
 			stats.BarrierWaits, stats.BarrierTime/time.Duration(stats.BarrierWaits))
+	}
+	if stats.ScoreboardStalls > 0 {
+		fmt.Printf("Scoreboard: %d stalls (%.1f per warp)\n",
+			stats.ScoreboardStalls, float64(stats.ScoreboardStalls)/float64(stats.TotalWarps))
 	}
 }
 

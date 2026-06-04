@@ -11,14 +11,18 @@ import (
 func TestVecmul(t *testing.T) {
 	s := GPUStateInit()
 	defer FreeGPGPUState(s)
-	GPUStateLoadKernel(s, "kernels/vecmul.bin")
 
+	// Match C test order: alloc data first, then load kernel
 	A := AllocMap(s,PtrSlotA, 2048*4)
 	B := AllocMap(s,PtrSlotB, 2048*4)
 	Caddr := AllocMap(s,PtrSlotC, 2048*4)
 	for i := 0; i < 2048; i++ {
 		*VramF32(s, A, i) = float32(i + 1)
 		*VramF32(s, B, i) = 2.0
+	}
+
+	if err := GPUStateLoadKernel(s, "../kernels/vecmul.bin"); err != nil {
+		t.Fatal(err)
 	}
 
 	if err := GPUStateRun(s,1, 1, 1, 2048, 1, 1); err != nil {
@@ -37,7 +41,6 @@ func TestVecmul(t *testing.T) {
 func TestSaxpy(t *testing.T) {
 	s := GPUStateInit()
 	defer FreeGPGPUState(s)
-	GPUStateLoadKernel(s, "kernels/saxpy.bin")
 
 	N := uint32(16384)
 	*VramU32(s, 0, 0) = N
@@ -61,6 +64,8 @@ func TestSaxpy(t *testing.T) {
 	VramWrite8(s, Xbase, unsafe.Pointer(&x[0]), int(N)*4)
 	VramWrite8(s, Ybase, unsafe.Pointer(&y[0]), int(N)*4)
 
+	GPUStateLoadKernel(s, "../kernels/saxpy.bin")
+
 	if err := GPUStateRun(s,1, 1, 1, 1, 1, 1); err != nil {
 		t.Fatal(err)
 	}
@@ -82,7 +87,6 @@ func TestSaxpy(t *testing.T) {
 func TestRV32M(t *testing.T) {
 	s := GPUStateInit()
 	defer FreeGPGPUState(s)
-	GPUStateLoadKernel(s, "kernels/rv32m.bin")
 
 	pairs := [][2]int32{{10, 3}, {10, -3}, {-5, -2}, {100, 0}, {int32(-2147483648), 2}, {-1, -1}}
 	*VramU32(s, 0, 0) = 6
@@ -92,6 +96,8 @@ func TestRV32M(t *testing.T) {
 		*VramU32(s, In, i*2) = uint32(p[0])
 		*VramU32(s, In, i*2+1) = uint32(p[1])
 	}
+
+	GPUStateLoadKernel(s, "../kernels/rv32m.bin")
 
 	if err := GPUStateRun(s,1, 1, 1, 1, 1, 1); err != nil {
 		t.Fatal(err)
@@ -106,10 +112,10 @@ func TestRV32M(t *testing.T) {
 			uint32((int64(a) * int64(b)) >> 32),
 			uint32((int64(a) * int64(uint32(b))) >> 32),
 			uint32((uint64(uint32(a)) * uint64(uint32(b))) >> 32),
-			ternU32(b != 0, uint32(a/b), 0xFFFFFFFF),
-			ternU32(b != 0, uint32(uint32(a)/uint32(b)), 0xFFFFFFFF),
-			ternU32(b != 0, uint32(a%b), uint32(a)),
-			ternU32(b != 0, uint32(uint32(a)%uint32(b)), uint32(a)),
+			divS32(a,b),
+			divU32(a,b),
+			remS32(a,b),
+			remU32(a,b),
 		}
 		for j := 0; j < 8; j++ {
 			if o[j] != ex[j] {
@@ -119,15 +125,10 @@ func TestRV32M(t *testing.T) {
 	}
 }
 
-func ternU32(cond bool, a, b uint32) uint32 {
-	if cond { return a }
-	return b
-}
 
 func TestRV32F(t *testing.T) {
 	s := GPUStateInit()
 	defer FreeGPGPUState(s)
-	GPUStateLoadKernel(s, "kernels/rv32f.bin")
 
 	fa, fb, fc := float32(3), float32(2), float32(4)
 	i32 := int32(-5)
@@ -139,6 +140,8 @@ func TestRV32F(t *testing.T) {
 	*VramF32(s, In, 2) = fc
 	*VramU32(s, In, 3) = uint32(i32)
 	*VramU32(s, In, 4) = u32
+
+	GPUStateLoadKernel(s, "../kernels/rv32f.bin")
 
 	if err := GPUStateRun(s,1, 1, 1, 1, 1, 1); err != nil {
 		t.Fatal(err)
@@ -169,12 +172,13 @@ func TestRV32F(t *testing.T) {
 func TestMemAccess(t *testing.T) {
 	s := GPUStateInit()
 	defer FreeGPGPUState(s)
-	GPUStateLoadKernel(s, "kernels/mem_access.bin")
 
 	in := []uint8{0x7F, 0x80, 0xFF, 0x00, 0x34, 0x12, 0x78, 0x56}
 	In := AllocMap(s,PtrSlotA, len(in))
 	AllocMap(s,PtrSlotC, 12*4)
 	VramWrite8(s, In, unsafe.Pointer(&in[0]), len(in))
+
+	GPUStateLoadKernel(s, "../kernels/mem_access.bin")
 
 	if err := GPUStateRun(s,1, 1, 1, 1, 1, 1); err != nil {
 		t.Fatal(err)
@@ -192,7 +196,6 @@ func TestMemAccess(t *testing.T) {
 func TestMatmul(t *testing.T) {
 	s := GPUStateInit()
 	defer FreeGPGPUState(s)
-	GPUStateLoadKernel(s, "kernels/matmul.bin")
 
 	*VramU32(s, 0, 0) = 2
 	A := AllocMap(s,PtrSlotA, 4)
@@ -200,6 +203,8 @@ func TestMatmul(t *testing.T) {
 	AllocMap(s,PtrSlotC, 4)
 	*VramF32(s, A, 0) = 1; *VramF32(s, A, 1) = 2
 	*VramF32(s, B, 0) = 3; *VramF32(s, B, 1) = 4
+
+	GPUStateLoadKernel(s, "../kernels/matmul.bin")
 
 	if err := GPUStateRun(s,1, 1, 1, 1, 1, 1); err != nil {
 		t.Fatal(err)
@@ -214,7 +219,6 @@ func TestMatmul(t *testing.T) {
 func TestDotProduct(t *testing.T) {
 	s := GPUStateInit()
 	defer FreeGPGPUState(s)
-	GPUStateLoadKernel(s, "kernels/dot_product.bin")
 
 	N := uint32(32768)
 	*VramU32(s, 0, 0) = N
@@ -224,6 +228,8 @@ func TestDotProduct(t *testing.T) {
 		*VramF32(s, A, int(i)) = float32(i%100) * 0.01
 		*VramF32(s, B, int(i)) = float32((i+1)%100) * 0.01
 	}
+
+	GPUStateLoadKernel(s, "../kernels/dot_product.bin")
 
 	if err := GPUStateRun(s,1, 1, 1, 1, 1, 1); err != nil {
 		t.Fatal(err)
@@ -242,7 +248,6 @@ func TestDotProduct(t *testing.T) {
 func TestMemcpy(t *testing.T) {
 	s := GPUStateInit()
 	defer FreeGPGPUState(s)
-	GPUStateLoadKernel(s, "kernels/memcpy.bin")
 
 	N := uint32(131072)
 	*VramU32(s, 0, 0) = N
@@ -251,6 +256,8 @@ func TestMemcpy(t *testing.T) {
 	for i := uint32(0); i < N; i++ {
 		*VramU32(s, A, int(i)) = i
 	}
+
+	GPUStateLoadKernel(s, "../kernels/memcpy.bin")
 
 	if err := GPUStateRun(s,1, 1, 1, 1, 1, 1); err != nil {
 		t.Fatal(err)
@@ -267,18 +274,21 @@ func TestMemcpy(t *testing.T) {
 func TestScalMul(t *testing.T) {
 	s := GPUStateInit()
 	defer FreeGPGPUState(s)
-	GPUStateLoadKernel(s, "kernels/scal_mul.bin")
 
+	// C test: PTR_SLOT_A=input, PTR_SLOT_D=alpha, PTR_SLOT_B=output
 	A := AllocMap(s,PtrSlotA, 4)
+	Alpha := AllocMap(s,PtrSlotD, 4)
+	AllocMap(s,PtrSlotB, 4)
 	*VramF32(s, A, 0) = 4.0
-	*VramF32(s, 0x400000, 0) = 0.75
-	AllocMap(s,PtrSlotC, 4)
+	*VramF32(s, Alpha, 0) = 0.75
+
+	GPUStateLoadKernel(s, "../kernels/scal_mul.bin")
 
 	if err := GPUStateRun(s,1, 1, 1, 1, 1, 1); err != nil {
 		t.Fatal(err)
 	}
 
-	result := *VramF32(s, PtrRead(s,PtrSlotC), 0)
+	result := *VramF32(s, PtrRead(s,PtrSlotB), 0)
 	if math.Abs(float64(result-3.0)) > 1e-5 {
 		t.Fatalf("got %.4f exp 3.0", result)
 	}
@@ -287,17 +297,19 @@ func TestScalMul(t *testing.T) {
 func TestGELU(t *testing.T) {
 	s := GPUStateInit()
 	defer FreeGPGPUState(s)
-	GPUStateLoadKernel(s, "kernels/gelu.bin")
 
+	// C test: PTR_SLOT_A=input, PTR_SLOT_B=output
 	A := AllocMap(s,PtrSlotA, 4)
-	AllocMap(s,PtrSlotC, 4)
+	AllocMap(s,PtrSlotB, 4)
 	*VramF32(s, A, 0) = 0.5
+
+	GPUStateLoadKernel(s, "../kernels/gelu.bin")
 
 	if err := GPUStateRun(s,1, 1, 1, 1, 1, 1); err != nil {
 		t.Fatal(err)
 	}
 
-	result := *VramF32(s, PtrRead(s,PtrSlotC), 0)
+	result := *VramF32(s, PtrRead(s,PtrSlotB), 0)
 	exp := 0.5 * (1.0 / (1.0 + math.Exp(-1.702*0.5)))
 	if math.Abs(float64(result-float32(exp))) > 1e-3 {
 		t.Fatalf("got %.4f exp %.4f", result, exp)
@@ -307,20 +319,21 @@ func TestGELU(t *testing.T) {
 func TestSoftmax(t *testing.T) {
 	s := GPUStateInit()
 	defer FreeGPGPUState(s)
-	GPUStateLoadKernel(s, "kernels/softmax.bin")
 
 	N := 64
 	A := AllocMap(s,PtrSlotA, N*4)
-	AllocMap(s,PtrSlotC, N*4) // B slot
+	AllocMap(s,PtrSlotB, N*4) // B slot
 	for i := 0; i < N; i++ {
 		*VramF32(s, A, i) = (float32(i) - 32.0) * 0.1
 	}
+
+	GPUStateLoadKernel(s, "../kernels/softmax.bin")
 
 	if err := GPUStateRun(s,1, 1, 1, uint32(N), 1, 1); err != nil {
 		t.Fatal(err)
 	}
 
-	Bout := PtrRead(s,PtrSlotC)
+	Bout := PtrRead(s,PtrSlotB)
 	var sum float32
 	for i := 0; i < N; i++ {
 		sum += *VramF32(s, Bout, i)
@@ -333,12 +346,13 @@ func TestSoftmax(t *testing.T) {
 func TestSoftmaxNorm(t *testing.T) {
 	s := GPUStateInit()
 	defer FreeGPGPUState(s)
-	GPUStateLoadKernel(s, "kernels/softmax_norm.bin")
 
 	A := AllocMap(s,PtrSlotA, 4)
 	AllocMap(s,PtrSlotC, 4)
 	*VramF32(s, A, 0) = float32(math.Exp(1))
 	*VramF32(s, 0x400000, 0) = float32(math.Exp(1))
+
+	GPUStateLoadKernel(s, "../kernels/softmax_norm.bin")
 
 	if err := GPUStateRun(s,1, 1, 1, 1, 1, 1); err != nil {
 		t.Fatal(err)
@@ -353,7 +367,6 @@ func TestSoftmaxNorm(t *testing.T) {
 func TestConv2d(t *testing.T) {
 	s := GPUStateInit()
 	defer FreeGPGPUState(s)
-	GPUStateLoadKernel(s, "kernels/conv2d.bin")
 
 	in := [9]float32{1, 2, 3, 4, 5, 6, 7, 8, 9}
 	kr := [4]float32{1, 0, 0, 1}
@@ -362,6 +375,8 @@ func TestConv2d(t *testing.T) {
 	AllocMap(s,PtrSlotC, 4)
 	VramWrite8(s, A, unsafe.Pointer(&in[0]), 9*4)
 	VramWrite8(s, B, unsafe.Pointer(&kr[0]), 4*4)
+
+	GPUStateLoadKernel(s, "../kernels/conv2d.bin")
 
 	if err := GPUStateRun(s,3, 3, 1, 2, 1, 1); err != nil {
 		t.Fatal(err)
@@ -372,3 +387,8 @@ func TestConv2d(t *testing.T) {
 		t.Fatalf("got %.4f exp 6.0", result)
 	}
 }
+
+func divS32(a, b int32) uint32 { if b != 0 { return uint32(a / b) }; return 0xFFFFFFFF }
+func divU32(a, b int32) uint32 { if b != 0 { return uint32(uint32(a) / uint32(b)) }; return 0xFFFFFFFF }
+func remS32(a, b int32) uint32 { if b != 0 { return uint32(a % b) }; return uint32(a) }
+func remU32(a, b int32) uint32 { if b != 0 { return uint32(uint32(a) % uint32(b)) }; return uint32(a) }

@@ -12,21 +12,23 @@ type WarpStats struct {
 	EngineTime  time.Duration // total time in engine_exec
 	BarrierTime time.Duration // total time waiting at barrier
 	Barriers    int           // how many barriers hit
+	SBStalls    int           // scoreboard stalls
 }
 
 // ── Global stats ──────────────────────────────────────────
 
 type Stats struct {
-	mu           sync.Mutex
-	TotalWarps   int
-	EngineTime   time.Duration
-	BarrierTime  time.Duration
-	BarrierWaits int
-	latencies    []time.Duration // per-warp total engine time
-	LatencyP50   time.Duration
-	LatencyP95   time.Duration
-	LatencyP99   time.Duration
-	LatencyMax   time.Duration
+	mu               sync.Mutex
+	TotalWarps       int
+	EngineTime       time.Duration
+	BarrierTime      time.Duration
+	BarrierWaits     int
+	ScoreboardStalls int // total scoreboard stalls
+	latencies        []time.Duration
+	LatencyP50       time.Duration
+	LatencyP95       time.Duration
+	LatencyP99       time.Duration
+	LatencyMax       time.Duration
 }
 
 var globalStats = &Stats{latencies: make([]time.Duration, 0, 32768)}
@@ -38,6 +40,7 @@ func RecordWarp(ws WarpStats) {
 	s.EngineTime += ws.EngineTime
 	s.BarrierTime += ws.BarrierTime
 	s.BarrierWaits += ws.Barriers
+	s.ScoreboardStalls += ws.SBStalls
 	s.latencies = append(s.latencies, ws.EngineTime)
 	s.mu.Unlock()
 }

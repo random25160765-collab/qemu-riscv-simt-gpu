@@ -28,6 +28,12 @@ const (
 	simtStkSz = 32 * 8       // SIMTFrame[32] = {int32_t, uint32_t} × 32
 )
 
+// engine_exec return code masks (mirror engine.h)
+const (
+	BarrierRet      = 0x10000 // bit16=1: barrier, low16=resume_pc
+	ScoreboardStall = 0x20000 // bit17=1: scoreboard stall, low16=resume_pc
+)
+
 // ── memory allocation ──────────────────────────────────────
 
 // AllocGPGPUState allocates a zero-filled GPGPUState on the C heap.
@@ -109,12 +115,12 @@ func ExecWarp(code *C.ThOp, tcount int, ctx *C.EngineContext,
 	gpr, fpr, vpr unsafe.Pointer, vl *C.uint32_t,
 	pc, mh, fcsr unsafe.Pointer,
 	stk *C.SIMTFrame, sdepth *C.int, resumePc int,
-	mma unsafe.Pointer) int {
+	mma unsafe.Pointer, sb *C.Scoreboard) int {
 	return int(C.engine_exec(code, C.int(tcount), ctx,
 		(*C.uint32_t)(gpr), (*C.uint32_t)(fpr), (*C.uint32_t)(vpr), vl,
 		(*C.uint32_t)(pc), (*C.uint32_t)(mh), (*C.uint32_t)(fcsr),
 		stk, sdepth, C.int(resumePc),
-		(*C.float)(mma)))
+		(*C.float)(mma), sb))
 }
 
 func LoadConfig(cfg *C.vpu_config_t, path string) {
@@ -164,18 +170,21 @@ func SetVramPtr(s *C.GPGPUState, p unsafe.Pointer) { s.vram_ptr = (*C.uint8_t)(p
 
 const KernAddr = 0x500000
 
+const debugBridge = true
+
 func GPUStateInit() *C.GPGPUState {
 	s := AllocGPGPUState()
 	s.warp_size = 32
 	s.global_status = 1
-	s.cfg.num_cus = 0
-	s.cfg.warps_per_cu = 1
-	SetVramSize(s, 16*1024*1024)
+	// Load lua config for feature flags (vpu/tcu/sfu/lp) and CU/warp settings
+	cpath := C.CString("../gpu_config.lua")
+	C.vpu_config_load(&s.cfg, cpath)
+	C.free(unsafe.Pointer(cpath))
+	SetVramSize(s, uint64(s.cfg.vram_mb)*1024*1024)
 	SetVramPtr(s, C.calloc(1, C.ulong(VramSize(s))))
-	if VramPtr(s) == nil {
-		return nil
-	}
-	VramAllocInit(s)
+	if VramPtr(s) == nil { return nil }
+	VramAllocReset(s)
+	if debugBridge { fmt.Printf("[init] vram=%p sz=%d vpu:%v tcu:%v\n", VramPtr(s), VramSize(s), bool(s.cfg.features.vpu), bool(s.cfg.features.tcu)) }
 	return s
 }
 
@@ -187,6 +196,7 @@ func GPUStateLoadKernel(s *C.GPGPUState, path string) error {
 	C.memcpy(unsafe.Pointer(uintptr(unsafe.Pointer(VramPtr(s)))+KernAddr),
 		unsafe.Pointer(&data[0]), C.size_t(len(data)))
 	SetKernSize(s, uint32(len(data)))
+	if debugBridge { fmt.Printf("[load] %s → vram[0x%x] sz=%d\n", path, KernAddr, len(data)) }
 	return nil
 }
 
@@ -201,10 +211,15 @@ func GPUStateRun(s *C.GPGPUState, gx, gy, gz, bx, by, bz uint32) error {
 func AllocMap(s *C.GPGPUState, slot int, bytes int) uint32 {
 	addr := VramAlloc(s, bytes)
 	VramPtrWrite(s, slot, addr)
+	if debugBridge { fmt.Printf("[alloc] slot=%d bytes=%d → vram[0x%x]  ptr_table[0x%x]=0x%x\n", slot, bytes, addr, 0x80+slot*4, addr) }
 	return addr
 }
 
-func PtrRead(s *C.GPGPUState, slot int) uint32 { return VramPtrRead(s, slot) }
+func PtrRead(s *C.GPGPUState, slot int) uint32 {
+	v := VramPtrRead(s, slot)
+	if debugBridge { fmt.Printf("[read] slot=%d → 0x%x\n", slot, v) }
+	return v
+}
 
 // ── helpers ────────────────────────────────────────────────
 

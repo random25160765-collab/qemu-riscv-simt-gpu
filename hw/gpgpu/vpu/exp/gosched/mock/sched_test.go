@@ -165,13 +165,12 @@ func runMockWarp(ctx context.Context, eng *MockEngine, bar *Barrier, errCh chan<
 			stats.record(ws)
 			errCh <- fmt.Errorf("warp %d: fail", warpID)
 			return
-		case ret&0x10000 != 0: // barrier
-			rpc := ret & 0xFFFF
-			pc = rpc // advance past barrier
+		case ret&0x10000 != 0: // barrier at current pc, resume from pc+1
 			t0 = time.Now()
 			bar.Wait()
 			ws.BarrierTime += time.Since(t0)
 			ws.Barriers++
+			pc++ // advance past barrier instruction
 		default:
 			stats.record(ws)
 			errCh <- fmt.Errorf("warp %d: unexpected ret=%d", warpID, ret)
@@ -291,7 +290,7 @@ func TestBarrier(t *testing.T) {
 	eng := NewMockEngine(10, 3, 7) // barriers at inst 3 and 7
 	err := runMockKernel(t, eng, 4, 4, RoundRobin, 0, stats)
 	if err != nil { t.Fatal(err) }
-	if eng.ExecCount() != 44 { // 4 warps × 11 calls
+	if eng.ExecCount() != 44 { // 4 warps × 11 calls (barrier counts as 1 call)
 		t.Fatalf("exec count: got %d, want 44", eng.ExecCount())
 	}
 	stats.finalize()
