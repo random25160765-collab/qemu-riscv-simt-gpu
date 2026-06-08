@@ -10,15 +10,22 @@ _start:
 	lw   t1, 0(t0)              # threadIdx.x
 
 	addi t0, zero, -32
-	and  t1, t1, t0             # col_start
+	and  t1, t1, t0             /* col_start = threadIdx.x & ~31 */
+
+	/* global_col_start = blockIdx.x * blockDim.x + col_start */
+	lui  t0, 0x80000
+	addi t0, t0, 0x10
+	lw   t6, 0(t0)              /* blockIdx.x */
+	lui  t0, 0x80000
+	addi t0, t0, 0x20
+	lw   t2, 0(t0)              /* blockDim.x */
+	mul  t6, t6, t2             /* blockIdx.x * blockDim.x */
+	add  t1, t1, t6             /* global_col_start */
 
 	lui  t0, 0x80000
 	addi t0, t0, 0x30
-	lw   t3, 0(t0)              # gridDim.x
-	lui  t0, 0x80000
-	addi t0, t0, 0x20
-	lw   t2, 0(t0)              # blockDim.x
-	mul  t3, t3, t2             # total N
+	lw   t3, 0(t0)              /* gridDim.x */
+	mul  t3, t3, t2             /* total N = gridDim.x * blockDim.x */
 
 	bge  t1, t3, exit
 	slli t1, t1, 2

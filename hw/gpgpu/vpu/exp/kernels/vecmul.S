@@ -15,19 +15,26 @@ _start:
     addi t0, zero, -32
     and  t1, t1, t0
 
-    /* N = gridDim.x * blockDim.x */
+    /* global_index = blockIdx.x * blockDim.x + warp_base */
+    lui  t0, 0x80000
+    addi t0, t0, 0x10
+    lw   t6, 0(t0)              /* blockIdx.x */
+    lui  t0, 0x80000
+    addi t0, t0, 0x20
+    lw   t2, 0(t0)              /* blockDim.x */
+    mul  t6, t6, t2             /* blockIdx.x * blockDim.x */
+    add  t1, t1, t6             /* global_offset = warp_base + blockIdx.x*blockDim.x */
+
+    /* N = gridDim.x * blockDim.x (reuse t2 = blockDim.x) */
     lui  t0, 0x80000
     addi t0, t0, 0x30
     lw   t3, 0(t0)
-    lui  t0, 0x80000
-    addi t0, t0, 0x20
-    lw   t2, 0(t0)
     mul  t3, t3, t2
 
-    /* 边界: warp_base >= N → exit */
+    /* 边界: global_offset >= N → exit */
     bge  t1, t3, exit
 
-    /* byte offset = warp_base * 4 */
+    /* byte offset = global_offset * 4 */
     slli t1, t1, 2
     addi t0, zero, 4
 
