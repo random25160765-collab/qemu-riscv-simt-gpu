@@ -1,0 +1,48 @@
+# ============================================================================
+# rv32a_spec.yaml — RV32A 原子操作扩展
+# ============================================================================
+
+families:
+
+  - name: lr_sc
+    template: lr_sc
+    desc: "Load Reserved / Store Conditional"
+    instructions:
+      - { name: lr_w, type: lr,
+          decode: { pattern: "00010 ?? 00000 ????? 010 ????? 01011 11",
+                    type: TYPE_R, imm: imm0 } }
+      - { name: sc_w, type: sc,
+          decode: { pattern: "00011 ?? ????? ????? 010 ????? 01011 11",
+                    type: TYPE_R, imm: imm0 } }
+
+  - name: amo
+    template: amo
+    desc: "Atomic memory ops (AMO*)"
+    instructions:
+      - { name: amoadd_w,  expr: "old + v",
+          decode: { pattern: "00000 ?? ????? ????? 010 ????? 01011 11",
+                    type: TYPE_R, imm: imm0 } }
+      - { name: amoswap_w, expr: "v",
+          decode: { pattern: "00001 ?? ????? ????? 010 ????? 01011 11",
+                    type: TYPE_R, imm: imm0 } }
+      - { name: amoxor_w,  expr: "old ^ v",
+          decode: { pattern: "00100 ?? ????? ????? 010 ????? 01011 11",
+                    type: TYPE_R, imm: imm0 } }
+      - { name: amoand_w,  expr: "old & v",
+          decode: { pattern: "01100 ?? ????? ????? 010 ????? 01011 11",
+                    type: TYPE_R, imm: imm0 } }
+      - { name: amoor_w,   expr: "old | v",
+          decode: { pattern: "01000 ?? ????? ????? 010 ????? 01011 11",
+                    type: TYPE_R, imm: imm0 } }
+      - { name: amomin_w,  expr: "((int32_t)old < (int32_t)v) ? old : v",
+          decode: { pattern: "10000 ?? ????? ????? 010 ????? 01011 11",
+                    type: TYPE_R, imm: imm0 } }
+      - { name: amomax_w,  expr: "((int32_t)old > (int32_t)v) ? old : v",
+          decode: { pattern: "10100 ?? ????? ????? 010 ????? 01011 11",
+                    type: TYPE_R, imm: imm0 } }
+      - { name: amominu_w, expr: "(old < v) ? old : v",
+          decode: { pattern: "11000 ?? ????? ????? 010 ????? 01011 11",
+                    type: TYPE_R, imm: imm0 } }
+      - { name: amomaxu_w, expr: "(old > v) ? old : v",
+          decode: { pattern: "11100 ?? ????? ????? 010 ????? 01011 11",
+                    type: TYPE_R, imm: imm0 } }

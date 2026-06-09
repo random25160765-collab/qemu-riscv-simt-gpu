@@ -1,0 +1,31 @@
+# ============================================================================
+# rv32zicsr_spec.yaml — Zicsr CSR 指令扩展
+#
+# CSR 指令共享相同的 switch(csr) 结构, 仅 read/write/set/clear 模式不同.
+# 6 条指令 → 1 个模板, 按 mode 展开.
+# ============================================================================
+
+families:
+
+  - name: csr
+    template: csr
+    desc: "CSR access (csrrw/csrrs/csrrc/csrrwi/csrrsi/csrrci)"
+    instructions:
+      - { name: csrrw,  mode: rw,   use_imm: false,
+          decode: { pattern: "??????? ????? ????? 001 ????? 11100 11",
+                    type: TYPE_CSR, imm: immCSR } }
+      - { name: csrrs,  mode: rs,   use_imm: false,
+          decode: { pattern: "??????? ????? ????? 010 ????? 11100 11",
+                    type: TYPE_CSR, imm: immCSR } }
+      - { name: csrrc,  mode: rc,   use_imm: false,
+          decode: { pattern: "??????? ????? ????? 011 ????? 11100 11",
+                    type: TYPE_CSR, imm: immCSR } }
+      - { name: csrrwi, mode: rw,   use_imm: true,
+          decode: { pattern: "??????? ????? ????? 101 ????? 11100 11",
+                    type: TYPE_CSR, imm: immCSR } }
+      - { name: csrrsi, mode: rs,   use_imm: true,
+          decode: { pattern: "??????? ????? ????? 110 ????? 11100 11",
+                    type: TYPE_CSR, imm: immCSR } }
+      - { name: csrrci, mode: rc,   use_imm: true,
+          decode: { pattern: "??????? ????? ????? 111 ????? 11100 11",
+                    type: TYPE_CSR, imm: immCSR } }

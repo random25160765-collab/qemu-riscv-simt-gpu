@@ -1,7 +1,6 @@
 /*
- * gelu.S — custom VPU GELU: out[i] = x * sigmoid(1.702 * x)
- * 使用 custom VPU (opcode 0x2B): vld.v / vfmul.vs / vfsig.v / vfmul.v / vst.v
- * 注: vfsig.v 无标准 RVV 等价指令，暂时保留 custom VPU 实现
+ * gelu.S — GELU: out[i] = x * sigmoid(1.702 * x)
+ * 自定义指令 vfsig.v (fast sigmoid, opcode 0x2B) — 无标准 RVV 等价
  */
 	.section .text
 	.globl _start
@@ -29,24 +28,22 @@ _start:
 	addi t5, t5, -292
 	fmv.w.x f0, t5
 
-	addi t0, zero, 4
-
 	/* v0 = x */
 	lw   t4, 0x80(zero)
 	add  t4, t4, t1
-	vld.v v0, (t4), t0
+	vle32.v v0, (t4)
 
 	/* v1 = 1.702 * x */
-	vfmul.vs v1, v0, f0
-	/* v1 = sigmoid(1.702*x) */
+	vfmul.vf v1, v0, f0
+	/* v1 = sigmoid(1.702*x) — custom SFU, no standard RVV equivalent */
 	vfsig.v v1, v1
 	/* v0 = x * sigmoid(1.702*x) */
-	vfmul.v v0, v0, v1
+	vfmul.vv v0, v0, v1
 
 	/* store */
 	lw   t4, 0x84(zero)
 	add  t4, t4, t1
-	vst.v v0, (t4), t0
+	vse32.v v0, (t4)
 
 exit:
 	ebreak

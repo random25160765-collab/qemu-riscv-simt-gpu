@@ -1,6 +1,6 @@
 /*
- * vecmul.S — VPU 向量乘法: C[i]=A[i]*B[i]
- * warp 级 SIMD: vld.v/vfmul.v/vst.v, 每 warp 32 元素
+ * vecmul.S — RVV 向量乘法: C[i]=A[i]*B[i]
+ * warp 级 SIMD, RVV 1.0 标准语法
  */
 
 .section .text
@@ -36,21 +36,20 @@ _start:
 
     /* byte offset = global_offset * 4 */
     slli t1, t1, 2
-    addi t0, zero, 4
 
     lw   t4, 0x80(zero)
     add  t4, t4, t1
-    vld.v v0, (t4), t0
+    vle32.v v0, (t4)
 
     lw   t4, 0x84(zero)
     add  t4, t4, t1
-    vld.v v1, (t4), t0
+    vle32.v v1, (t4)
 
-    vfmul.v v2, v0, v1
+    vfmul.vv v2, v0, v1
 
     lw   t4, 0x88(zero)
     add  t4, t4, t1
-    vst.v v2, (t4), t0
+    vse32.v v2, (t4)
 
 exit:
     ebreak

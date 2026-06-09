@@ -1,0 +1,34 @@
+# ============================================================================
+# mma_spec.yaml — TCU 矩阵乘加指令 (custom-1 opcode 0x2B, funct3=111)
+#
+# 当前 handler 仍在 engine.c 中手写, dispatch 条目由 gen_dispatch.py 生成。
+# 未来迁移到 gen_mma.py 生成 handler。
+# ============================================================================
+
+families:
+
+  - name: mma
+    template: mma
+    desc: "Matrix multiply-accumulate (mma_cfg/s/zero/ld/st/relu/bias)"
+    instructions:
+      - { name: mma_cfg,
+          decode: { pattern: "0000000 ????? ????? 111 ????? 01010 11",
+                    type: TYPE_R, imm: imm0 } }
+      - { name: mma_s,
+          decode: { pattern: "0000001 ????? ????? 111 ????? 01010 11",
+                    type: TYPE_R, imm: imm0 } }
+      - { name: mma_zero,
+          decode: { pattern: "0000010 00000 00000 111 ????? 01010 11",
+                    type: TYPE_R, imm: imm0 } }
+      - { name: mma_ld,
+          decode: { pattern: "0000011 ????? ????? 111 ????? 01010 11",
+                    type: TYPE_R, imm: imm0 } }
+      - { name: mma_st,
+          decode: { pattern: "0000100 ????? ????? 111 ????? 01010 11",
+                    type: TYPE_R, imm: imm0 } }
+      - { name: mma_relu,
+          decode: { pattern: "0000101 00000 00000 111 ????? 01010 11",
+                    type: TYPE_R, imm: imm0 } }
+      - { name: mma_bias,
+          decode: { pattern: "0000111 ????? ????? 111 ????? 01010 11",
+                    type: TYPE_R, imm: imm0 } }

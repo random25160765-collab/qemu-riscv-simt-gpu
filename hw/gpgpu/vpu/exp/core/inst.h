@@ -15,7 +15,9 @@
 #define IF_DEBUG_INST(code) ((void)0)
 #endif
 
-#define NUM_OF_INST 300
+#ifndef NUM_OF_INST
+#define NUM_OF_INST 300 /* 可由 dispatch_list.h 覆盖 */
+#endif
 #define MATCH_EBREAK 0x00100073
 
 /* Instruction Parsing Macros and tools */

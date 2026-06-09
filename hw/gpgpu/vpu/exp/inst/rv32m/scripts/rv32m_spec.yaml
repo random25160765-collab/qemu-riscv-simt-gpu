@@ -1,0 +1,34 @@
+# ============================================================================
+# rv32m_spec.yaml — RV32M 乘除法扩展
+# ============================================================================
+
+families:
+
+  - name: mul_div
+    template: mul_div
+    desc: "Multiply/Divide (mul/mulh/mulhsu/mulhu/div/divu/rem/remu)"
+    instructions:
+      - { name: mul,    type: mul,    texpr: "int32_t",   rexpr: "int32_t",   op: "*",   hi: false,
+          decode: { pattern: "0000001 ????? ????? 000 ????? 01100 11",
+                    type: TYPE_R, imm: imm0 } }
+      - { name: mulh,   type: mulh,   texpr: "int64_t",   rexpr: "int32_t",   op: "*",   hi: true,
+          decode: { pattern: "0000001 ????? ????? 001 ????? 01100 11",
+                    type: TYPE_R, imm: imm0 } }
+      - { name: mulhsu, type: mulhsu, texpr: "(int64_t)(int32_t) a * (uint64_t) b", rexpr: "", op: "", hi: true,
+          decode: { pattern: "0000001 ????? ????? 010 ????? 01100 11",
+                    type: TYPE_R, imm: imm0 } }
+      - { name: mulhu,  type: mulhu,  texpr: "uint64_t",  rexpr: "uint32_t",  op: "*",   hi: true,
+          decode: { pattern: "0000001 ????? ????? 011 ????? 01100 11",
+                    type: TYPE_R, imm: imm0 } }
+      - { name: div,    type: div,    texpr: "int32_t",   rexpr: "",           op: "/",   hi: false,
+          decode: { pattern: "0000001 ????? ????? 100 ????? 01100 11",
+                    type: TYPE_R, imm: imm0 } }
+      - { name: divu,   type: divu,   texpr: "uint32_t",  rexpr: "",           op: "/",   hi: false,
+          decode: { pattern: "0000001 ????? ????? 101 ????? 01100 11",
+                    type: TYPE_R, imm: imm0 } }
+      - { name: rem,    type: rem,    texpr: "int32_t",   rexpr: "",           op: "%",   hi: false,
+          decode: { pattern: "0000001 ????? ????? 110 ????? 01100 11",
+                    type: TYPE_R, imm: imm0 } }
+      - { name: remu,   type: remu,   texpr: "uint32_t",  rexpr: "",           op: "%",   hi: false,
+          decode: { pattern: "0000001 ????? ????? 111 ????? 01100 11",
+                    type: TYPE_R, imm: imm0 } }

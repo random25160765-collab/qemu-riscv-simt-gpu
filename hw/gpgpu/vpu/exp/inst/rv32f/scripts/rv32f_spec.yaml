@@ -1,0 +1,143 @@
+# ============================================================================
+# rv32f_spec.yaml — RV32F 单精度浮点扩展
+# ============================================================================
+
+families:
+
+  # FP Load/Store
+  - name: float_ldst
+    template: float_ldst
+    desc: "FP load/store (flw/fsw)"
+    instructions:
+      - { name: flw, type: load,
+          decode: { pattern: "??????? ????? ????? 010 ????? 00001 11",
+                    type: TYPE_I, imm: immI } }
+      - { name: fsw, type: store,
+          decode: { pattern: "??????? ????? ????? 010 ????? 01001 11",
+                    type: TYPE_S, imm: immS } }
+
+  # FP FMA: rd = ±(rs1*rs2 ± rs3)
+  - name: float_fma
+    template: float_fma
+    desc: "FP fused multiply-add (fmadd/fmsub/fnmsub/fnmadd)"
+    instructions:
+      - { name: fmadd_s,  expr: "FR(rs1, _li) * FR(rs2, _li) + FR(rs3, _li)",
+          decode: { pattern: "?????00 ????? ????? ??? ????? 10000 11",
+                    type: TYPE_F4, imm: imm0 } }
+      - { name: fmsub_s,  expr: "FR(rs1, _li) * FR(rs2, _li) - FR(rs3, _li)",
+          decode: { pattern: "?????00 ????? ????? ??? ????? 10001 11",
+                    type: TYPE_F4, imm: imm0 } }
+      - { name: fnmsub_s, expr: "-(FR(rs1, _li) * FR(rs2, _li) - FR(rs3, _li))",
+          decode: { pattern: "?????00 ????? ????? ??? ????? 10010 11",
+                    type: TYPE_F4, imm: imm0 } }
+      - { name: fnmadd_s, expr: "-(FR(rs1, _li) * FR(rs2, _li) + FR(rs3, _li))",
+          decode: { pattern: "?????00 ????? ????? ??? ????? 10011 11",
+                    type: TYPE_F4, imm: imm0 } }
+
+  # FP 二元: rd = rs1 OP rs2
+  - name: float_bin
+    template: float_bin
+    desc: "FP binary (fadd/fsub/fmul/fdiv)"
+    instructions:
+      - { name: fadd_s, op: "+",
+          decode: { pattern: "0000000 ????? ????? ??? ????? 10100 11",
+                    type: TYPE_FR, imm: imm0 } }
+      - { name: fsub_s, op: "-",
+          decode: { pattern: "0000100 ????? ????? ??? ????? 10100 11",
+                    type: TYPE_FR, imm: imm0 } }
+      - { name: fmul_s, op: "*",
+          decode: { pattern: "0001000 ????? ????? ??? ????? 10100 11",
+                    type: TYPE_FR, imm: imm0 } }
+      - { name: fdiv_s, op: "/",
+          decode: { pattern: "0001100 ????? ????? ??? ????? 10100 11",
+                    type: TYPE_FR, imm: imm0 } }
+
+  # FP sqrt
+  - name: float_sqrt
+    template: float_sqrt
+    desc: "FP sqrt"
+    instructions:
+      - { name: fsqrt_s, expr: "sqrtf(FR(rs1, _li))",
+          decode: { pattern: "0101100 00000 ????? ??? ????? 10100 11",
+                    type: TYPE_FR, imm: imm0 } }
+
+  # 符号注入
+  - name: float_sgnj
+    template: float_sgnj
+    desc: "FP sign inject (fsgnj/fsgnjn/fsgnjx)"
+    instructions:
+      - { name: fsgnj_s,  expr: "(FPR(rs1, _li) & ~0x80000000) | (FPR(rs2, _li) & 0x80000000)",
+          decode: { pattern: "0010000 ????? ????? 000 ????? 10100 11",
+                    type: TYPE_FR, imm: imm0 } }
+      - { name: fsgnjn_s, expr: "(FPR(rs1, _li) & ~0x80000000) | ((~FPR(rs2, _li)) & 0x80000000)",
+          decode: { pattern: "0010000 ????? ????? 001 ????? 10100 11",
+                    type: TYPE_FR, imm: imm0 } }
+      - { name: fsgnjx_s, expr: "FPR(rs1, _li) ^ (FPR(rs2, _li) & 0x80000000)",
+          decode: { pattern: "0010000 ????? ????? 010 ????? 10100 11",
+                    type: TYPE_FR, imm: imm0 } }
+
+  # FP 最值
+  - name: float_minmax
+    template: float_minmax
+    desc: "FP min/max with NaN handling"
+    instructions:
+      - { name: fmin_s, cmp: "<",
+          decode: { pattern: "0010100 ????? ????? 000 ????? 10100 11",
+                    type: TYPE_FR, imm: imm0 } }
+      - { name: fmax_s, cmp: ">",
+          decode: { pattern: "0010100 ????? ????? 001 ????? 10100 11",
+                    type: TYPE_FR, imm: imm0 } }
+
+  # FP 比较 (结果写 GPR)
+  - name: float_cmp
+    template: float_cmp
+    desc: "FP compare to GPR (feq/flt/fle)"
+    instructions:
+      - { name: feq_s, op: "==",
+          decode: { pattern: "1010000 ????? ????? 010 ????? 10100 11",
+                    type: TYPE_FR, imm: imm0 } }
+      - { name: flt_s, op: "<",
+          decode: { pattern: "1010000 ????? ????? 001 ????? 10100 11",
+                    type: TYPE_FR, imm: imm0 } }
+      - { name: fle_s, op: "<=",
+          decode: { pattern: "1010000 ????? ????? 000 ????? 10100 11",
+                    type: TYPE_FR, imm: imm0 } }
+
+  # FP <-> Int 转换
+  - name: float_fcvt
+    template: float_fcvt
+    desc: "FP <-> int conversion"
+    instructions:
+      - { name: fcvt_s_w,  from: "int",  to: "float", expr: "(float)(int32_t)GPR(rs1, _li)",
+          decode: { pattern: "1101000 00000 ????? ??? ????? 10100 11",
+                    type: TYPE_FR, imm: imm0 } }
+      - { name: fcvt_s_wu, from: "int",  to: "float", expr: "(float)GPR(rs1, _li)",
+          decode: { pattern: "1101000 00001 ????? ??? ????? 10100 11",
+                    type: TYPE_FR, imm: imm0 } }
+      - { name: fcvt_w_s,  from: "float", to: "int",  expr: "fcvt_w_s_impl(FPR(rs1, _li), FR(rs1, _li))",
+          decode: { pattern: "1100000 00000 ????? ??? ????? 10100 11",
+                    type: TYPE_FR, imm: imm0 } }
+      - { name: fcvt_wu_s, from: "float", to: "int",  expr: "fcvt_wu_s_impl(FPR(rs1, _li), FR(rs1, _li))",
+          decode: { pattern: "1100000 00001 ????? ??? ????? 10100 11",
+                    type: TYPE_FR, imm: imm0 } }
+
+  # 数据移动
+  - name: float_mv
+    template: float_mv
+    desc: "FP <-> int move (fmv.w.x, fmv.x.w)"
+    instructions:
+      - { name: fmv_w_x, from: "int",   to: "float", expr: "FPR(rd, _li) = GPR(rs1, _li)",
+          decode: { pattern: "1111000 00000 ????? 000 ????? 10100 11",
+                    type: TYPE_FR, imm: imm0 } }
+      - { name: fmv_x_w, from: "float", to: "int",   expr: "GPR(rd, _li) = FPR(rs1, _li)",
+          decode: { pattern: "1110000 00000 ????? 000 ????? 10100 11",
+                    type: TYPE_FR, imm: imm0 } }
+
+  # fclass
+  - name: float_fclass
+    template: float_fclass
+    desc: "FP classify"
+    instructions:
+      - { name: fclass_s,
+          decode: { pattern: "1110000 00000 ????? 001 ????? 10100 11",
+                    type: TYPE_FR, imm: imm0 } }

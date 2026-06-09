@@ -85,7 +85,7 @@ static void s_gelu(GPGPUState *s)
     alloc_map(s, PTR_SLOT_B, N * 4);
     uint32_t seed = 123;
     for (uint32_t i = 0; i < N; i++)
-        ((float *)(s->vram_ptr + In))[i] = ((float)i - (float)N/2) * 0.01f + randf(&seed) * 0.1f;
+        ((float *)(s->vram_ptr + In))[i] = ((float)i - (float)N / 2) * 0.01f + randf(&seed) * 0.1f;
 }
 static void s_softmax(GPGPUState *s)
 {
@@ -99,7 +99,11 @@ static void s_softmax(GPGPUState *s)
 }
 /* gelu/softmax 的正确性由 func test 中的精确单元测试覆盖;
  * bench 测试侧重于性能测量, 暂用采样 + cmp 模式验证 */
-static int c_ok(GPGPUState *s) { (void)s; return 0; }
+static int c_ok(GPGPUState *s)
+{
+    (void)s;
+    return 0;
+}
 /* ---- vecmul check: C[i] = A[i] * B[i] ---- */
 static int c_vecmul_bench(GPGPUState *s)
 {
@@ -222,31 +226,25 @@ static int c_matmul_cmp(GPGPUState *s)
 void bench_tests_register(void)
 {
     /* vecmul: flops = N×2 (总指令估算) */
-    B("vecmul 64K", "kernels/vecmul.bin", 2048, 1, 1, 32, 1, 1,
-      131072, s_vecmul, c_vecmul_bench, 65536, 0, 0);
-    B("vecmul 256K", "kernels/vecmul.bin", 8192, 1, 1, 32, 1, 1,
-      524288, s_vecmul, c_vecmul_bench, 262144, 0, 0);
-    B("vecmul 1M", "kernels/vecmul.bin", 32768, 1, 1, 32, 1, 1,
-      2097152, s_vecmul, c_vecmul_bench, 1048576, 0, 0);
+    B("vecmul 64K", "kernels/vecmul.bin", 2048, 1, 1, 32, 1, 1, 131072, s_vecmul, c_vecmul_bench, 65536, 0, 0);
+    B("vecmul 256K", "kernels/vecmul.bin", 8192, 1, 1, 32, 1, 1, 524288, s_vecmul, c_vecmul_bench, 262144, 0, 0);
+    B("vecmul 1M", "kernels/vecmul.bin", 32768, 1, 1, 32, 1, 1, 2097152, s_vecmul, c_vecmul_bench, 1048576, 0, 0);
 
     /* matmul: flops = M×K×N×2 / TCU_pct, 按 perf 动态 TCU% 逐尺寸修正 */
-    BM("matmul 128", "kernels/matmul.bin", 128, 1, 1, 128, 1, 1,
-       16000000ULL, s_matmul, 128, 128, 128);       /* TCU 26% → ×3.85 */
-    BM("matmul 256", "kernels/matmul.bin", 256, 1, 1, 256, 1, 1,
-       112000000ULL, s_matmul, 256, 256, 256);       /* TCU 30% → ×3.33 */
-    BM("matmul 512", "kernels/matmul.bin", 512, 1, 1, 512, 1, 1,
-       813000000ULL, s_matmul, 512, 512, 512);       /* TCU 33% → ×3.03 */
-    BM("matmul 1024", "kernels/matmul.bin", 1024, 1, 1, 1024, 1, 1,
-       5800000000ULL, s_matmul, 1024, 1024, 1024);   /* TCU 37% → ×2.70 */
+    BM("matmul 128", "kernels/matmul.bin", 128, 1, 1, 128, 1, 1, 16000000ULL, s_matmul, 128, 128,
+       128); /* TCU 26% → ×3.85 */
+    BM("matmul 256", "kernels/matmul.bin", 256, 1, 1, 256, 1, 1, 112000000ULL, s_matmul, 256, 256,
+       256); /* TCU 30% → ×3.33 */
+    BM("matmul 512", "kernels/matmul.bin", 512, 1, 1, 512, 1, 1, 813000000ULL, s_matmul, 512, 512,
+       512); /* TCU 33% → ×3.03 */
+    BM("matmul 1024", "kernels/matmul.bin", 1024, 1, 1, 1024, 1, 1, 5800000000ULL, s_matmul, 1024, 1024,
+       1024); /* TCU 37% → ×2.70 */
 
     /* scal_mul: flops = N×2 */
-    B("scal_mul 64K", "kernels/scal_mul.bin", 2048, 1, 1, 32, 1, 1,
-      131072, s_scal, c_scal_bench, 65536, 0, 0);
+    B("scal_mul 64K", "kernels/scal_mul.bin", 2048, 1, 1, 32, 1, 1, 131072, s_scal, c_scal_bench, 65536, 0, 0);
 
     /* gelu/softmax: 正确性由 func test 覆盖, bench 侧重性能 */
-    B("gelu 64K", "kernels/gelu.bin", 2048, 1, 1, 32, 1, 1,
-      393216, s_gelu, c_ok, 65536, 0, 0);
-    B("softmax 256", "kernels/softmax.bin", 256, 1, 1, 1, 1, 1,
-      327680, s_softmax, c_ok, 256, 0, 0);
+    B("gelu 64K", "kernels/gelu.bin", 2048, 1, 1, 32, 1, 1, 393216, s_gelu, c_ok, 65536, 0, 0);
+    B("softmax 256", "kernels/softmax.bin", 256, 1, 1, 1, 1, 1, 327680, s_softmax, c_ok, 256, 0, 0);
 #undef B
 }

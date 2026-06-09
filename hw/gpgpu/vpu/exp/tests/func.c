@@ -273,7 +273,8 @@ static int c_gelu(GPGPUState *s)
 {
     uint32_t Out = vram_ptr_read(s, PTR_SLOT_B);
     float expected = 0.5f * (1.0f / (1.0f + expf(-1.702f * 0.5f)));
-    return fabsf(((float *)(s->vram_ptr + Out))[0] - expected) > 1e-3f;
+    float actual = ((float *)(s->vram_ptr + Out))[0];
+    return fabsf(actual - expected) > 1e-3f;
 }
 static void s_smax(GPGPUState *s)
 {

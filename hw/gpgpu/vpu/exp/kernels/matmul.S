@@ -1,6 +1,6 @@
 /*
  * matmul.S — TCU 矩阵乘法, K-loop 4x 展开 + 累加器
- * mma.zero / mma.s / mma.st + vld.v
+ * mma.* 自定义指令 (opcode 0x2B) — 无标准 RVV 等价
  */
 
 .section .text
@@ -36,7 +36,6 @@ _start:
     lw   a3, 0x80(zero)          # a3 = ptr_table[0] (A base)
     add  a0, a0, a3             # a0 = A[row][0]
 
-    addi a5, zero, 4            # stride = 4
     slli a6, t4, 2              # a6 = N * 4
 
     slli a2, t1, 2
@@ -50,22 +49,22 @@ kloop4:
     bge  a7, t6, cleanup
 
     flw  f0, 0(a0)
-    vld.v v1, (a2), a5
+    vle32.v v1, (a2)
     mma.s acc0, v1, f0
 
     flw  f0, 4(a0)
     add  a2, a2, a6
-    vld.v v1, (a2), a5
+    vle32.v v1, (a2)
     mma.s acc0, v1, f0
 
     flw  f0, 8(a0)
     add  a2, a2, a6
-    vld.v v1, (a2), a5
+    vle32.v v1, (a2)
     mma.s acc0, v1, f0
 
     flw  f0, 12(a0)
     add  a2, a2, a6
-    vld.v v1, (a2), a5
+    vle32.v v1, (a2)
     mma.s acc0, v1, f0
 
     addi a0, a0, 16
@@ -76,7 +75,7 @@ kloop4:
 cleanup:
     bge  a7, t5, done
     flw  f0, 0(a0)
-    vld.v v1, (a2), a5
+    vle32.v v1, (a2)
     mma.s acc0, v1, f0
     addi a0, a0, 4
     add  a2, a2, a6

@@ -11,6 +11,7 @@
 #include "state.h"
 #include "config.h"
 #include "gpgpu_core.h"
+#include "../inst/dispatch_list.h" /* 必须在 engine.h 之前, trie/dispatch 对齐 */
 #include "engine.h"
 #include "vram.h"
 #include "predecode.h"

@@ -46,7 +46,7 @@
  * FP 精确异常: 0=关闭(向量化快路径), 1=开启(frm/fflags 完整支持)
  *   开启后 FOR_EACH_LANE 内部有分支, 编译器无法自动向量化 → 性能损失 ~5-8x
  * ============================================================ */
-#define ENABLE_FP_CSR 0
+#define ENABLE_FP_CSR 1
 
 #if ENABLE_FP_CSR
 
@@ -200,8 +200,7 @@ void engine_resolve_handlers(ThOp *code, int tcount)
  * ============================================================ */
 int engine_exec(ThOp *code, int tcount, const EngineContext *ctx, uint32_t gpr[32 * 32], uint32_t fpr[32 * 32],
                 uint32_t *vpr, uint32_t *vl, uint32_t _pc[32], uint32_t _mhartid[32], uint32_t _fcsr[32],
-                SIMTFrame *_stk_ext,
-                int *_sdepth_ext, int resume_pc, float _mma_acc[8 * 32])
+                SIMTFrame *_stk_ext, int *_sdepth_ext, int resume_pc, float _mma_acc[8 * 32])
 {
     ThOp *ip;
     uint32_t _active = ctx->active;
@@ -885,7 +884,7 @@ op_vredmax_v: {
         uint32_t _vm = (ip[-1].inst >> 25) & 1;                                                     \
         FOR_EACH_LANE                                                                               \
         {                                                                                           \
-            if ((uint32_t)_li < _vl && (_vm || (*(uint32_t *)&VR(0, _li) & 1)))                                              \
+            if ((uint32_t)_li < _vl && (_vm || (*(uint32_t *)&VR(0, _li) & 1)))                     \
                 *(int32_t *)&VR(vd, _li) = *(int32_t *)&VR(vs1, _li) op * (int32_t *)&VR(vs2, _li); \
             PC(_li) += 4;                                                                           \
         }                                                                                           \
@@ -898,7 +897,7 @@ op_vredmax_v: {
         uint32_t _vm = (ip[-1].inst >> 25) & 1;                                                                \
         FOR_EACH_LANE                                                                                          \
         {                                                                                                      \
-            if ((uint32_t)_li < _vl && (_vm || (*(uint32_t *)&VR(0, _li) & 1)))                                                         \
+            if ((uint32_t)_li < _vl && (_vm || (*(uint32_t *)&VR(0, _li) & 1)))                                \
                 *(int32_t *)&VR(vd, _li) = (*(int32_t *)&VR(vs1, _li) op * (int32_t *)&VR(vs2, _li)) ? -1 : 0; \
             PC(_li) += 4;                                                                                      \
         }                                                                                                      \
@@ -911,26 +910,26 @@ op_vredmax_v: {
         uint32_t _vm = (ip[-1].inst >> 25) & 1;                                                                  \
         FOR_EACH_LANE                                                                                            \
         {                                                                                                        \
-            if ((uint32_t)_li < _vl && (_vm || (*(uint32_t *)&VR(0, _li) & 1)))                                                           \
+            if ((uint32_t)_li < _vl && (_vm || (*(uint32_t *)&VR(0, _li) & 1)))                                  \
                 *(int32_t *)&VR(vd, _li) = (*(uint32_t *)&VR(vs1, _li) op * (uint32_t *)&VR(vs2, _li)) ? -1 : 0; \
             PC(_li) += 4;                                                                                        \
         }                                                                                                        \
         NEXT();                                                                                                  \
     }
-#define VINTSHIFT(name, op)                                                     \
-    op_##name:                                                                  \
-    {                                                                           \
-        int vd = ip[-1].rd, vs1 = ip[-1].rs1, vs2 = ip[-1].rs2;                 \
-        uint32_t _vm = (ip[-1].inst >> 25) & 1;                                 \
-        FOR_EACH_LANE                                                           \
-        {                                                                       \
-            if ((uint32_t)_li < _vl && (_vm || (*(uint32_t *)&VR(0, _li) & 1))) {                        \
-                uint32_t _shamt = *(uint32_t *)&VR(vs2, _li) & 31;              \
-                *(int32_t *)&VR(vd, _li) = *(int32_t *)&VR(vs1, _li) op _shamt; \
-            }                                                                   \
-            PC(_li) += 4;                                                       \
-        }                                                                       \
-        NEXT();                                                                 \
+#define VINTSHIFT(name, op)                                                       \
+    op_##name:                                                                    \
+    {                                                                             \
+        int vd = ip[-1].rd, vs1 = ip[-1].rs1, vs2 = ip[-1].rs2;                   \
+        uint32_t _vm = (ip[-1].inst >> 25) & 1;                                   \
+        FOR_EACH_LANE                                                             \
+        {                                                                         \
+            if ((uint32_t)_li < _vl && (_vm || (*(uint32_t *)&VR(0, _li) & 1))) { \
+                uint32_t _shamt = *(uint32_t *)&VR(vs2, _li) & 31;                \
+                *(int32_t *)&VR(vd, _li) = *(int32_t *)&VR(vs1, _li) op _shamt;   \
+            }                                                                     \
+            PC(_li) += 4;                                                         \
+        }                                                                         \
+        NEXT();                                                                   \
     }
     VINTALU(vadd_vv, +)
     VINTALU(vsub_vv, -)
@@ -1015,8 +1014,7 @@ op_vmerge_vvm: {
     int vd = ip[-1].rd, vs1 = ip[-1].rs1, vs2 = ip[-1].rs2;
     FOR_EACH_LANE
     {
-        if ((uint32_t)_li < _vl)
-            VR(vd, _li) = (*(uint32_t *)&VR(0, _li) & 1) ? VR(vs2, _li) : VR(vs1, _li);
+        if ((uint32_t)_li < _vl) VR(vd, _li) = (*(uint32_t *)&VR(0, _li) & 1) ? VR(vs2, _li) : VR(vs1, _li);
         PC(_li) += 4;
     }
     NEXT();
@@ -1054,8 +1052,7 @@ op_vfmul_vv: {
     uint32_t vm = (ip[-1].inst >> 25) & 1;
     FOR_EACH_LANE
     {
-        if ((uint32_t)_li < _vl && (vm || (*(uint32_t *)&VR(0, _li) & 1)))
-            VR(vd, _li) = VR(vs1, _li) * VR(vs2, _li);
+        if ((uint32_t)_li < _vl && (vm || (*(uint32_t *)&VR(0, _li) & 1))) VR(vd, _li) = VR(vs1, _li) * VR(vs2, _li);
         PC(_li) += 4;
     }
     NEXT();
@@ -1066,8 +1063,7 @@ op_vfmul_vf: {
     uint32_t vm = (ip[-1].inst >> 25) & 1;
     FOR_EACH_LANE
     {
-        if ((uint32_t)_li < _vl && (vm || (*(uint32_t *)&VR(0, _li) & 1)))
-            VR(vd, _li) = VR(vs2, _li) * sc;
+        if ((uint32_t)_li < _vl && (vm || (*(uint32_t *)&VR(0, _li) & 1))) VR(vd, _li) = VR(vs2, _li) * sc;
         PC(_li) += 4;
     }
     NEXT();
@@ -1097,7 +1093,9 @@ op_vsetvli: {
      * ============================================================ */
 op_mma_cfg: {
     int rd = ip[-1].rd, rs1 = ip[-1].rs1, rs2 = ip[-1].rs2;
-    (void)rd; (void)rs1; (void)rs2;
+    (void)rd;
+    (void)rs1;
+    (void)rs2;
     FOR_EACH_LANE PC(_li) += 4;
     NEXT();
 }

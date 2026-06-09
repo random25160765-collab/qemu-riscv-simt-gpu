@@ -12,6 +12,7 @@
 #include <pthread.h>
 #include "state.h"
 #include "gpgpu_core.h"
+#include "../inst/dispatch_list.h" /* NEW: 必须在 engine.h 之前, trie 和 dispatch 对齐 */
 #include "engine.h"
 #include "scheduler.h"
 #include "predecode.h"

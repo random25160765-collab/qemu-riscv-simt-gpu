@@ -5,3 +5,8 @@
 kernels/*.bin
 gpu_sched
 tools/kerncheck
+
+# generated handler & dispatch files
+inst/*/handles/*.h
+inst/dispatch_list.h
+inst/dispatch_rebind.h

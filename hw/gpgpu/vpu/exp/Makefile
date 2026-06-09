@@ -15,31 +15,28 @@ CC       = gcc
 RV_CC    = riscv64-unknown-elf-gcc
 RV_OBJCOPY = riscv64-unknown-elf-objcopy
 
-CFLAGS   = -Wall -Wextra -O3 -mavx2 -g -fno-strict-aliasing -I. -Icore -Ivpu -Itcu -Iproto -I/usr/include/lua5.4
+CFLAGS   = -O3 -mavx2 -g -fno-strict-aliasing -I. -Icore -Ilib -Iproto -I/usr/include/lua5.4
 LDFLAGS  = -lm -lrt -lpthread -llua5.4 -ldl
-RV_CFLAGS = -march=rv32imf -mabi=ilp32 -nostdlib -Ttext=0x0 -Wl,--build-id=none
+RV_CFLAGS = -march=rv32imfv -mabi=ilp32 -nostdlib -Ttext=0x0 -Wl,--build-id=none
 
 SRCS  = main.c test_runner.c config.c stats.c
 SRCS += tests/func.c tests/bench.c tests/native.c tests/register.c
-SRCS += core/engine.c core/scheduler.c core/vram_alloc.c
-SRCS += core/decode_trie.c core/lpfp.c core/vram.c core/proto.c core/table.c
-SRCS += vpu/vpu.c tcu/tcu.c
+SRCS += core/engine_mod.c core/scheduler.c core/vram_alloc.c
+SRCS += core/decode_trie.c core/vram.c core/proto.c core/table.c lib/lpfp.c
+# vpu/vpu.c tcu/tcu.c removed — dead code, replaced by inst/rvv/
 OBJS  = $(SRCS:.c=.o)
 
 # ── libengine.a: C engine for Go scheduler ──────────────────
 # excludes scheduler.c, test_runner.c, tests/*.c, main.c
 LIB_SRCS  = config.c stats.c
-LIB_SRCS += core/engine.c core/engine_bridge.c core/vram_alloc.c
-LIB_SRCS += core/decode_trie.c core/lpfp.c core/vram.c core/proto.c core/table.c
-LIB_SRCS += vpu/vpu.c tcu/tcu.c
+LIB_SRCS += core/engine_mod.c core/engine_bridge.c core/vram_alloc.c
+LIB_SRCS += core/decode_trie.c core/vram.c core/proto.c core/table.c lib/lpfp.c
+# vpu/vpu.c tcu/tcu.c removed — dead code, replaced by inst/rvv/
 LIB_OBJS  = $(LIB_SRCS:.c=.o)
-LIB_CFLAGS = -Wall -Wextra -O2 -g -fno-strict-aliasing -I. -Icore -Ivpu -Itcu -Iproto -I/usr/include/lua5.4
+LIB_CFLAGS = -Wall -Wextra -O2 -g -fno-strict-aliasing -I. -Icore -Ilib -Iproto -I/usr/include/lua5.4
 
 libengine.a: $(LIB_OBJS)
 	ar rcs $@ $^
-
-core/engine_bridge.o: core/engine_bridge.c core/engine_bridge.h
-	$(CC) $(LIB_CFLAGS) -c -o $@ $<
 
 $(LIB_OBJS): %.o: %.c
 	@mkdir -p $(dir $@)
@@ -63,6 +60,20 @@ go-all: go-build
 KERN_SRCS = $(wildcard kernels/*.S)
 KERN_BINS = $(KERN_SRCS:.S=.bin)
 
+# ── ISA handler 生成 (inst/ 子目录) ──────────────────────────
+.PHONY: inst-gen inst-clean
+
+inst-gen:
+	@$(MAKE) -C inst
+
+inst-clean:
+	@$(MAKE) -C inst clean
+
+# 编译前必须先生成 handler + dispatch 表
+# engine_mod.o 包含生成的 dispatch 头文件, 必须先于编译生成 (| = order-only)
+$(OBJS): | inst-gen
+$(LIB_OBJS): | inst-gen
+
 all: test
 
 test: $(KERN_BINS) perf_test.elf
@@ -71,14 +82,17 @@ test: $(KERN_BINS) perf_test.elf
 perf_test.elf: $(OBJS)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
-# 改 gpu_config.lua (perf 开关) 后自动重编 engine.c
-core/engine.o: gpu_config.lua
+# 改 gpu_config.lua (perf 开关) 后自动重编 engine_mod.c
+core/engine_mod.o: gpu_config.lua
+# RVV handler 池中未分配 dispatch 条目的 label 产生 -Wunused-label,
+# 加 decode 字段后自动消除。暂时局部关闭 warning。
+core/engine_mod.o: LIB_CFLAGS += -Wno-unused-label -Wno-unused-variable -Wno-type-limits
 
 %.o: %.c
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -c -o $@ $<
 
-kernels/%.bin: kernels/%.S tools/kerncheck
+kernels/%.bin: kernels/%.S tools/kerncheck | inst-gen
 	@echo "  ASM    $<"
 	@rm -f $<.tmp.S
 	@python3 tools/customasm.py $< $<.tmp.S
@@ -93,13 +107,13 @@ tools/kerncheck: tools/kerncheck.c core/dispatch.h core/decode_trie.c core/inst.
 
 kernels: $(KERN_BINS)
 
-asan: CFLAGS = -Wall -Wextra -O0 -g -fsanitize=address -fno-omit-frame-pointer -I. -Icore -Ivpu -Itcu -Iproto -I/usr/include/lua5.4
+asan: CFLAGS = -Wall -Wextra -O0 -g -fsanitize=address -fno-omit-frame-pointer -I. -Icore -Iproto -I/usr/include/lua5.4
 asan: LDFLAGS = -lm -lrt -lpthread -llua5.4 -ldl -fsanitize=address
 asan: clean $(KERN_BINS) perf_test.elf
 	@echo "=== ASAN $(CMD) ==="
 	./perf_test.elf $(CMD) $(FILTER)
 
-clean:
+clean: inst-clean
 	rm -f perf_test.elf $(OBJS) $(KERN_BINS) vpu_asan
 
 count:

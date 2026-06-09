@@ -25,7 +25,9 @@ typedef enum {
 
 /* ============================================================
  * INSTRUCTION_LIST — 唯一权威的指令定义
+ * (dispatch_list.h 提供新定义时可被覆盖)
  * ============================================================ */
+#ifndef INSTRUCTION_LIST
 #define INSTRUCTION_LIST                                                     \
     X(jal, "??????? ????? ????? ??? ????? 11011 11", TYPE_J, immJ);          \
     X(jalr, "??????? ????? ????? 000 ????? 11001 11", TYPE_I, immI);         \
@@ -187,6 +189,7 @@ typedef enum {
     X(vfmul_vf, "100100? ????? ????? 101 ????? 10101 11", TYPE_R, imm0);     \
     /* vsetvli: opcode 0x57, funct3=111 */                                   \
     X(vsetvli, "0?????? ????? ????? 111 ????? 10101 11", TYPE_R, imm0)
+#endif /* INSTRUCTION_LIST */
 
 static inline int32_t imm0(uint32_t i)
 {
