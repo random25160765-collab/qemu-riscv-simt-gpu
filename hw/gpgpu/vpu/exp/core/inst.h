@@ -15,9 +15,7 @@
 #define IF_DEBUG_INST(code) ((void)0)
 #endif
 
-#ifndef NUM_OF_INST
-#define NUM_OF_INST 300 /* 可由 dispatch_list.h 覆盖 */
-#endif
+/* NUM_OF_INST 由 inst/dispatch_list.h (gen_dispatch.py 生成) 提供 */
 #define MATCH_EBREAK 0x00100073
 
 /* Instruction Parsing Macros and tools */

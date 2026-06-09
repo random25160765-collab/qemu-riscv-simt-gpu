@@ -21,7 +21,7 @@ RV_CFLAGS = -march=rv32imfv -mabi=ilp32 -nostdlib -Ttext=0x0 -Wl,--build-id=none
 
 SRCS  = main.c test_runner.c config.c stats.c
 SRCS += tests/func.c tests/bench.c tests/native.c tests/register.c
-SRCS += core/engine_mod.c core/scheduler.c core/vram_alloc.c
+SRCS += core/engine.c core/scheduler.c core/vram_alloc.c
 SRCS += core/decode_trie.c core/vram.c core/proto.c core/table.c lib/lpfp.c
 # vpu/vpu.c tcu/tcu.c removed — dead code, replaced by inst/rvv/
 OBJS  = $(SRCS:.c=.o)
@@ -29,7 +29,7 @@ OBJS  = $(SRCS:.c=.o)
 # ── libengine.a: C engine for Go scheduler ──────────────────
 # excludes scheduler.c, test_runner.c, tests/*.c, main.c
 LIB_SRCS  = config.c stats.c
-LIB_SRCS += core/engine_mod.c core/engine_bridge.c core/vram_alloc.c
+LIB_SRCS += core/engine.c core/engine_bridge.c core/vram_alloc.c
 LIB_SRCS += core/decode_trie.c core/vram.c core/proto.c core/table.c lib/lpfp.c
 # vpu/vpu.c tcu/tcu.c removed — dead code, replaced by inst/rvv/
 LIB_OBJS  = $(LIB_SRCS:.c=.o)
@@ -70,7 +70,7 @@ inst-clean:
 	@$(MAKE) -C inst clean
 
 # 编译前必须先生成 handler + dispatch 表
-# engine_mod.o 包含生成的 dispatch 头文件, 必须先于编译生成 (| = order-only)
+# engine.o 包含生成的 dispatch 头文件, 必须先于编译生成 (| = order-only)
 $(OBJS): | inst-gen
 $(LIB_OBJS): | inst-gen
 
@@ -82,11 +82,11 @@ test: $(KERN_BINS) perf_test.elf
 perf_test.elf: $(OBJS)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
-# 改 gpu_config.lua (perf 开关) 后自动重编 engine_mod.c
-core/engine_mod.o: gpu_config.lua
+# 改 gpu_config.lua (perf 开关) 后自动重编 engine.c
+core/engine.o: gpu_config.lua
 # RVV handler 池中未分配 dispatch 条目的 label 产生 -Wunused-label,
 # 加 decode 字段后自动消除。暂时局部关闭 warning。
-core/engine_mod.o: LIB_CFLAGS += -Wno-unused-label -Wno-unused-variable -Wno-type-limits
+core/engine.o: LIB_CFLAGS += -Wno-unused-label -Wno-unused-variable -Wno-type-limits
 
 %.o: %.c
 	@mkdir -p $(dir $@)
@@ -101,7 +101,7 @@ kernels/%.bin: kernels/%.S tools/kerncheck | inst-gen
 	@rm -f $@.elf $<.tmp.S
 	@./tools/kerncheck $@
 
-tools/kerncheck: tools/kerncheck.c core/dispatch.h core/decode_trie.c core/inst.h core/utils.h
+tools/kerncheck: tools/kerncheck.c core/dispatch.h core/decode_trie.c core/inst.h core/utils.h | inst-gen
 	@echo "  CC     tools/kerncheck"
 	@$(CC) -Wall -O2 -I. -Icore -o $@ tools/kerncheck.c core/decode_trie.c -lm
 

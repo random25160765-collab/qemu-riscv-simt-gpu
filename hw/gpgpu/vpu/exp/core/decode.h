@@ -1,27 +1,30 @@
 /*
- * dispatch.h — dispatch 表 + trie 基础设施
+ * decode.h — trie 基础设施 (SIMDDecoder + simd_decoder_init)
  *
- * INSTRUCTION_LIST 由 inst/gen_dispatch.py 从 ISA spec 聚合生成。
+ * 从旧 dispatch.h 拆分: 只含 trie 构造逻辑, INSTRUCTION_LIST 由外部提供。
+ * engine.c 和 tools/kerncheck.c 各自 include 所需的 INSTRUCTION_LIST 来源。
  */
-#ifndef SIMD_DISPATCH_H
-#define SIMD_DISPATCH_H
+#ifndef SIMD_DECODE_H
+#define SIMD_DECODE_H
 
 #include "inst.h"
 #include "utils.h"
 #include "decode_trie.h"
 #include "state.h"
 
-/* === 指令类型 === */
 typedef enum {
-    TYPE_R, TYPE_I, TYPE_U, TYPE_S, TYPE_J, TYPE_B,
-    TYPE_CSR, TYPE_FR, TYPE_FI, TYPE_FS, TYPE_F4
+    TYPE_R,
+    TYPE_I,
+    TYPE_U,
+    TYPE_S,
+    TYPE_J,
+    TYPE_B,
+    TYPE_CSR,
+    TYPE_FR,
+    TYPE_FI,
+    TYPE_FS,
+    TYPE_F4
 } inst_type_t;
-
-/* === 生成数据: INSTRUCTION_LIST + DISP_ enum + NUM_OF_INST === */
-#include "../inst/dispatch_list.h"
-
-/* === 生成: rvv_dispatch_rebind() === */
-#include "../inst/dispatch_rebind.h"
 
 static inline int32_t imm0(uint32_t i)
 {
@@ -29,7 +32,6 @@ static inline int32_t imm0(uint32_t i)
     return 0;
 }
 
-/* === Dispatch 表 + trie === */
 #define SIMD_NUM_INST NUM_OF_INST
 
 typedef struct {
@@ -48,10 +50,12 @@ static inline __attribute__((unused)) void simd_decoder_init(SIMDDecoder *d)
     d->op_table[idx].mask = pattern_to_mask(pattern),                     \
     d->op_table[idx].match = pattern_to_match(pattern),                   \
     d->op_table[idx].exec = NULL, d->op_table[idx].type = op_type, idx++
-    { INSTRUCTION_LIST; }
+    {
+        INSTRUCTION_LIST;
+    }
 #undef X
     d->op_count = idx;
     decode_trie_build(&d->trie, d->op_table, d->op_count);
 }
 
-#endif /* SIMD_DISPATCH_H */
+#endif /* SIMD_DECODE_H */
