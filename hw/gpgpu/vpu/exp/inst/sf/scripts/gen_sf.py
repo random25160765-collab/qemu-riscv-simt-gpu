@@ -30,10 +30,9 @@ def gen_vf_unary(inst):
     op_{inst['name']}:
     {{
         int vd = ip[-1].rd, vs1 = ip[-1].rs1;
-        uint32_t _vm = (ip[-1].inst >> 25) & 1;
         FOR_EACH_LANE
         {{
-            if ((uint32_t)_li < _vl && (_vm || (*(uint32_t *)&VR(0, _li) & 1))) {{
+            if ((uint32_t)_li < _vl) {{
                 float v = *(float *)&VR(vs1, _li);
                 *(float *)&VR(vd, _li) = (float)({inst['expr']});
             }}
@@ -50,11 +49,11 @@ def gen_vf_reduce(inst):
     if op == "max":
         body = "float v = *(float *)&VR(vs1, _li); if (isnan(mx) || v > mx) mx = v;"
         init = "float mx = NAN;"
-        result = "*(float *)&VR(rd, 0) = mx;"
+        result = "FR(rd, 0) = mx;"
     else:
         body = "sum += *(float *)&VR(vs1, _li);"
         init = "float sum = 0;"
-        result = "*(float *)&VR(rd, 0) = sum;"
+        result = "FR(rd, 0) = sum;"
     return dedent(f"""\
     op_{inst['name']}:
     {{
