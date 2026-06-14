@@ -1,7 +1,0 @@
-# build
-fuzz_test
-*.o
-
-# crash dumps
-crashes/
-crashes.log
